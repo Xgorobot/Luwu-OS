@@ -106,12 +106,12 @@ Qt App → QKeyEvent → /dev/input/eventX → gpio-keys 内核驱动 → 硬件
 ```
 
 ### 按键映射
-| 物理按键 | GPIO | 建议映射 |
-|---------|------|---------|
-| A (左上) | 17 | KEY_UP |
-| B (右上) | 22 | KEY_DOWN |
-| C (左下) | 23 | KEY_LEFT |
-| D (右下) | 24 | KEY_RIGHT |
+| 物理按键 | GPIO | 映射 |
+|---------|------|------|
+| A (左上) | 17 | KEY_LEFT |
+| B (右上) | 22 | KEY_RIGHT |
+| C (左下) | 23 | KEY_BACK |
+| D (右下) | 24 | KEY_ENTER |
 
 ### 做法
 - device tree 配置 gpio-keys

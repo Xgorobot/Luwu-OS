@@ -12,27 +12,27 @@
                 status = "okay";
                 autorepeat;
 
-                key_up: up {
-                    label = "KEY_UP";
-                    linux,code = <103>;
-                    gpios = <&gpio 17 1>;
-                    debounce-interval = <20>;
-                };
-                key_down: down {
-                    label = "KEY_DOWN";
-                    linux,code = <108>;
-                    gpios = <&gpio 22 1>;
-                    debounce-interval = <20>;
-                };
                 key_left: left {
                     label = "KEY_LEFT";
                     linux,code = <105>;
-                    gpios = <&gpio 23 1>;
+                    gpios = <&gpio 17 1>;
                     debounce-interval = <20>;
                 };
                 key_right: right {
                     label = "KEY_RIGHT";
                     linux,code = <106>;
+                    gpios = <&gpio 22 1>;
+                    debounce-interval = <20>;
+                };
+                key_back: back {
+                    label = "KEY_BACK";
+                    linux,code = <158>;
+                    gpios = <&gpio 23 1>;
+                    debounce-interval = <20>;
+                };
+                key_enter: enter {
+                    label = "KEY_ENTER";
+                    linux,code = <28>;
                     gpios = <&gpio 24 1>;
                     debounce-interval = <20>;
                 };
