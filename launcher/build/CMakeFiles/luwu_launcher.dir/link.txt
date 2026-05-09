@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/luwu_launcher.dir/link.d CMakeFiles/luwu_launcher.dir/main.cpp.o -o luwu_launcher  /usr/lib/aarch64-linux-gnu/libQt6Widgets.so.6.8.2 /usr/lib/aarch64-linux-gnu/libQt6Gui.so.6.8.2 /usr/lib/aarch64-linux-gnu/libGLX.so /usr/lib/aarch64-linux-gnu/libOpenGL.so /usr/lib/aarch64-linux-gnu/libQt6Core.so.6.8.2

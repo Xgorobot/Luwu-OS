@@ -1,0 +1,3 @@
+/home/pi/luwu-os/launcher/build/CMakeFiles/luwu_launcher.dir
+/home/pi/luwu-os/launcher/build/CMakeFiles/edit_cache.dir
+/home/pi/luwu-os/launcher/build/CMakeFiles/rebuild_cache.dir

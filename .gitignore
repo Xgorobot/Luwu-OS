@@ -1,6 +1,5 @@
 # 编译产物
-launcher/build/
-!launcher/build/luwu_launcher
+
 
 # Python
 __pycache__/
