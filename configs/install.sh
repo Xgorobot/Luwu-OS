@@ -8,7 +8,7 @@ echo "=== Luwu OS 系统配置部署 ==="
 
 # 0. 依赖包
 echo "[0/6] 安装依赖包 ..."
-apt install -y python3-pip python3-pyside6 python3-numpy python3-picamera2
+apt install -y python3-pip python3-pyside6 python3-numpy python3-picamera2 python3-evdev mplayer alsa-utils
 echo "  ✓ 依赖包已安装"
 
 # 1. /boot/firmware/config.txt
