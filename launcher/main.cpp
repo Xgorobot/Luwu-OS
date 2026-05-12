@@ -2,6 +2,8 @@
 #include <QStackedWidget>
 #include <QLabel>
 #include <QTimer>
+#include <fcntl.h>
+#include <unistd.h>
 #include <QDateTime>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -22,6 +24,7 @@
 // ========================================================================
 static constexpr const char *PRELOAD_SCRIPT = "/home/pi/luwu-os/apps/demo_page/preload_app.py";
 static constexpr const char *FIFO_PATH = "/tmp/luwu_preload.fifo";
+static constexpr const char *KEYS_FIFO = "/tmp/luwu_keys.fifo";
 
 // ========================================================================
 // Main
@@ -45,6 +48,8 @@ int main(int argc, char *argv[]) {
     preloadProc->setProcessChannelMode(QProcess::ForwardedChannels);
 
     QElapsedTimer launchTimer;
+
+    KeyFilter *keyFilter = nullptr;  // early decl for lambdas below
 
     auto startPreload = [&]() {
         unlink(FIFO_PATH);
@@ -70,9 +75,13 @@ int main(int argc, char *argv[]) {
             qint64 total = launchTimer.elapsed();
             qDebug().noquote() << QString("[luwu-launcher][%1] PySide finished code=%2 status=%3 total=%4ms")
                                       .arg(QDateTime::currentMSecsSinceEpoch()).arg(code).arg(int(st)).arg(total);
+            keyFilter->blocked = false;
+            unlink(KEYS_FIFO);
             stack.showFullScreen();
+            stack.repaint();  // force immediate redraw to avoid black screen
             // 切回主菜单
             stack.setCurrentIndex(0);
+            stack.repaint();
             gallery->setFocus();
             QTimer::singleShot(300, &stack, startPreload);
         });
@@ -83,6 +92,11 @@ int main(int argc, char *argv[]) {
             startPreload();
             return;
         }
+        // Hide launcher so child app gets framebuffer + key events
+        unlink(KEYS_FIFO);
+        mkfifo(KEYS_FIFO, 0666);
+        stack.hide();
+        keyFilter->blocked = true;
         qint64 t_req = QDateTime::currentMSecsSinceEpoch();
         qDebug().noquote() << QString("[luwu-launcher][%1] request -> trigger (%2)")
                                   .arg(t_req).arg(script);
@@ -107,8 +121,18 @@ int main(int argc, char *argv[]) {
     startPreload();
 
     // --- 按键处理（keyfilter 全局拦截，按当前页面分发） ---
-    auto *keyFilter = new KeyFilter(&stack);
+    keyFilter = new KeyFilter(&stack);
     keyFilter->onKey = [&](QKeyEvent *ke) {
+        // When child app is running, forward keys via FIFO
+        if (keyFilter->blocked) {
+            int kfd = ::open(KEYS_FIFO, O_WRONLY | O_NONBLOCK);
+            if (kfd >= 0) {
+                QByteArray line = QByteArray::number(ke->key()) + '\n';
+                ::write(kfd, line.constData(), line.size());
+                ::close(kfd);
+            }
+            return;
+        }
         const char *name = "?";
         int currentPage = stack.currentIndex();
 
@@ -136,7 +160,7 @@ int main(int argc, char *argv[]) {
                     } else {
                         QString app = gallery->selectedAppPath();
                         if (QFile::exists(app)) {
-                            launchApp(QString("apps/") + CARDS[idx].appPath);
+                            launchApp(CARDS[idx].appPath);
                         } else {
                             qDebug() << "[luwu-launcher] app not found:" << app;
                         }

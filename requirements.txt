@@ -1,0 +1,28 @@
+# Luwu OS — Python pip 依赖
+# ============================
+# 大部分包通过 apt 安装（见 configs/install.sh），本文件仅列出：
+#  1. apt 中没有的包
+#  2. 需要比 apt 版本更新的包
+#  3. 本地开发的包（xgoedu-luwuos, xgolib）
+#
+# 安装方式：
+#   pip3 install --break-system-packages -r requirements.txt
+#   （Debian 保护系统 Python，嵌入式设备上需加 --break-system-packages）
+
+# ---- Web 框架（Flask 图传等）----
+# apt 中有 python3-flask / python3-flask-socketio 但版本较旧；
+# 如需最新特性可从这里装，否则用 apt 版本（install.sh 默认装 apt 版）
+# flask>=3.1
+# flask-socketio>=5.5
+
+# ---- 扫码配网 ----
+# pyzbar — QR 码扫描（底层依赖 libzbar0t64 需用 apt 安装）
+pyzbar>=0.1
+
+# ---- 本地包 ----
+# xgolib — 机器人运动库（非 pip 标准包，通过 sys.path 引用）
+#   路径: /home/pi/lib/xgolib_dog.py
+#   如需安装为 pip 包: cd /home/pi/xgolib && pip3 install --break-system-packages -e .
+
+# xgoedu-luwuos — 新镜像教育库
+#   cd /home/pi/xgoedu-luwuos && pip3 install --break-system-packages -e .

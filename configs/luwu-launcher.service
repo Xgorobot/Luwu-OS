@@ -10,8 +10,7 @@ SupplementaryGroups=tty input
 Environment="QT_QPA_PLATFORM=linuxfb:fb=/dev/fb-spi"
 Environment="QT_QPA_FONTDIR=/usr/share/fonts"
 # 先停掉 splash mplayer，释放 SPI 帧缓冲，再启动 Qt
-# + 前缀确保以 root 权限运行，可以杀任意用户的 mplayer
-ExecStartPre=+/home/pi/luwu-os/configs/kill-splash.sh
+ExecStartPre=/home/pi/luwu-os/configs/kill-splash.sh
 ExecStart=/home/pi/luwu-os/launcher/build/luwu_launcher
 Restart=always
 RestartSec=3

@@ -105,6 +105,36 @@ time.sleep(0.02)
 Qt App → QKeyEvent → /dev/input/eventX → gpio-keys 内核驱动 → 硬件中断
 ```
 
+> **实施补充**：实际架构是双进程——launcher（C++ Qt 桌面）和子 App（PySide6 Python）各自独立运行在 linuxfb 上。
+> 同一 evdev 设备只能被一个 QApplication 可靠读取，因此子 App 运行时 launcher 通过 FIFO 转发按键。
+
+```
+                   gpio-keys 内核驱动
+                          │
+                   /dev/input/eventX
+                          │
+                    launcher (C++ Qt)
+                    独占 evdev 读取
+                          │
+              ┌─ blocked=false ─→ launcher 自己处理（桌面导航）
+              │
+              └─ blocked=true  ─→ /tmp/luwu_keys.fifo（持久写入）
+                                      │
+                                子 App (PySide6)
+                              QSocketNotifier 监听到达
+                                      │
+                              QApplication::postEvent
+                                      │
+                              widget.keyPressEvent
+```
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| FIFO 写入端 | `launcher/main.cpp` | `keyFilter->blocked=true` 时，`keysFifoFile` 持久打开写入 Qt key 值 |
+| FIFO 读取端 | `apps/network/main.py` | `os.open(KEYS_FIFO, O_RDONLY\|O_NONBLOCK)` + `QSocketNotifier` 监听 |
+| FIFO 路径 | — | `/tmp/luwu_keys.fifo` |
+| 按键映射权威源 | `configs/luwu-keys.dts` | 所有代码以设备树 `linux,code` 为准，禁止自行假设 |
+
 ### 按键映射
 | 物理按键 | GPIO | 映射 |
 |---------|------|------|

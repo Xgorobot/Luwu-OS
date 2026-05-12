@@ -408,6 +408,18 @@ CMakeFiles/luwu_launcher.dir/main.cpp.o: \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/QTimer \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qtimer.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qbasictimer.h \
+ /usr/include/fcntl.h /usr/include/aarch64-linux-gnu/bits/fcntl.h \
+ /usr/include/aarch64-linux-gnu/bits/fcntl-linux.h \
+ /usr/include/aarch64-linux-gnu/bits/types/struct_iovec.h \
+ /usr/include/linux/falloc.h /usr/include/aarch64-linux-gnu/bits/stat.h \
+ /usr/include/aarch64-linux-gnu/bits/struct_stat.h /usr/include/unistd.h \
+ /usr/include/aarch64-linux-gnu/bits/posix_opt.h \
+ /usr/include/aarch64-linux-gnu/bits/environments.h \
+ /usr/include/aarch64-linux-gnu/bits/confname.h \
+ /usr/include/aarch64-linux-gnu/bits/getopt_posix.h \
+ /usr/include/aarch64-linux-gnu/bits/getopt_core.h \
+ /usr/include/aarch64-linux-gnu/bits/unistd_ext.h \
+ /usr/include/linux/close_range.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/QDateTime \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qdatetime.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qcalendar.h \
@@ -469,19 +481,11 @@ CMakeFiles/luwu_launcher.dir/main.cpp.o: \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qtextoption.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qpen.h \
  /usr/include/aarch64-linux-gnu/sys/stat.h \
- /usr/include/aarch64-linux-gnu/bits/stat.h \
- /usr/include/aarch64-linux-gnu/bits/struct_stat.h \
  /usr/include/aarch64-linux-gnu/bits/statx.h /usr/include/linux/stat.h \
  /usr/include/aarch64-linux-gnu/bits/statx-generic.h \
  /usr/include/aarch64-linux-gnu/bits/types/struct_statx_timestamp.h \
  /usr/include/aarch64-linux-gnu/bits/types/struct_statx.h \
- /usr/include/unistd.h /usr/include/aarch64-linux-gnu/bits/posix_opt.h \
- /usr/include/aarch64-linux-gnu/bits/environments.h \
- /usr/include/aarch64-linux-gnu/bits/confname.h \
- /usr/include/aarch64-linux-gnu/bits/getopt_posix.h \
- /usr/include/aarch64-linux-gnu/bits/getopt_core.h \
- /usr/include/aarch64-linux-gnu/bits/unistd_ext.h \
- /usr/include/linux/close_range.h /home/pi/luwu-os/launcher/keyfilter.h \
+ /home/pi/luwu-os/launcher/keyfilter.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/QObject \
  /home/pi/luwu-os/launcher/galleryview.h \
  /usr/include/aarch64-linux-gnu/qt6/QtWidgets/QWidget \
