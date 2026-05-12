@@ -314,15 +314,9 @@ class RCModePage(QWidget):
         self.status_label.setStyleSheet("color: #8892c9; font-size: 12px;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # ---- 启动耗时 ----
-        self.info = QLabel("boot: -- ms")
-        self.info.setStyleSheet("color: #5c6a9c; font-size: 9px;")
-        self.info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info.setWordWrap(True)
-
         # ---- 四角按键提示 ----
         corner_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_bl = QLabel("Exit", self)
+        self.corner_bl = QLabel("C: 退出", self)
         self.corner_bl.setStyleSheet(corner_style)
 
         # ---- 布局 ----
@@ -334,8 +328,6 @@ class RCModePage(QWidget):
         layout.addWidget(self.ip_label)
         layout.addSpacing(10)
         layout.addWidget(self.status_label)
-        layout.addSpacing(20)
-        layout.addWidget(self.info)
 
         # ---- 定时刷新 ----
         self.timer = QTimer(self)
@@ -365,7 +357,6 @@ class RCModePage(QWidget):
             self._first_paint_logged = True
             mark("first paintEvent")
             summary = self._stage_summary()
-            self.info.setText(summary)
             print("[rc_mode] boot breakdown:\n" + summary, flush=True)
 
     def _stage_summary(self) -> str:
@@ -378,9 +369,9 @@ class RCModePage(QWidget):
 
     # ---- 按键 ----
     def keyPressEvent(self, ev: QKeyEvent):
-        if ev.key() == Qt.Key.Key_Left:
-            # KEY_LEFT = 物理左下 C 键 → 退出
-            print("[rc_mode] KEY_LEFT -> exit", flush=True)
+        if ev.key() == Qt.Key.Key_Back:
+            # Key_Back = 物理左下 C 键 → 退出
+            print("[rc_mode] KEY_Key_Back -> exit", flush=True)
             self.close()
 
     def closeEvent(self, ev):

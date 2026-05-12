@@ -7,8 +7,10 @@
 
 static constexpr const char *ASSET_DIR = "/home/pi/luwu-os/launcher/assets/";
 
-// 6 个占位 demo：名字 + 颜色
+// 示例程序列表：名字 + 颜色 + appPath
 static const DemoItem DEMOS[] = {
+    // 第 1 个：图传模式（有真实图标 demo_rc.png）
+    {"\u56fe\u4f20\u6a21\u5f0f", "#E74C3C", "apps/rc_mode/main.py"},
     {"Calculator", "#4A90D9", ""},
     {"Clock",      "#50C878", ""},
     {"Weather",    "#FF6B6B", ""},
@@ -117,10 +119,17 @@ void DemoGridView::loadImages() {
         bgLabel->setScaledContents(true);
     }
 
-    // 生成占位图标
+    // 加载图标（优先真实 PNG，否则占位生成）
     for (int i = 0; i < DEMO_COUNT; ++i) {
-        QColor color(demoItems[i].color);
-        QPixmap icon = makePlaceholderIcon(color, itemW);
+        QPixmap icon;
+        // 第 0 项（图传模式）使用真实图标
+        if (i == 0) {
+            icon = QPixmap(QString(ASSET_DIR) + "demo_rc.png");
+        }
+        if (icon.isNull()) {
+            QColor color(demoItems[i].color);
+            icon = makePlaceholderIcon(color, itemW);
+        }
         itemIcons[i]->setPixmap(icon);
     }
 

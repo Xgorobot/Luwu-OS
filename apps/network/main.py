@@ -53,12 +53,44 @@ _TEXTS = {
         "scanning":    "请将WiFi二维码对准摄像头",
         "no_qr":       "未检测到二维码",
         "connecting":  "正在连接 {}...",
-        "success":     "WiFi连接成功！",
-        "failed":      "连接失败，请重试",
+        "success":     "WiFi连接成功!",
+        "failed":      "连接失败,请重试",
         "reset":       "网络已重置为XGO2",
         "reset_hint":  "A:重置",
         "exit_hint":   "C:退出",
+        "manual_hint": "D:手动",
         "qr_hint":     "支持Android/XGO-APP WiFi二维码",
+        "wifi_list_title":    "选择WiFi网络",
+        "wifi_scanning":      "扫描WiFi...",
+        "wifi_no_networks":   "未发现WiFi网络",
+        "wifi_now":           "已连接: {}",
+        "wifi_none":          "未连接WiFi",
+        "password_title":     "输入密码",
+        "password_for":       "密码: {}",
+        "keyboard_shift":     "↑",
+        "keyboard_del":       "←",
+        "keyboard_space":     "SP",
+        "keyboard_ok":        "确定",
+        # 四角按键提示 — WiFi列表页
+        "corner_tl_list":     "A:上",
+        "corner_tr_list":     "B:下",
+        "corner_bl_list":     "C:返回",
+        "corner_br_list":     "D:选择",
+        # 四角按键提示 — 密码键盘页
+        "corner_tl_kb":       "A:左",
+        "corner_tr_kb":       "B:右",
+        "corner_bl_kb":       "C:退格",
+        "corner_br_kb":       "D:选择",
+        # 国家选择
+        "country_hint":       "B:国家",
+        "country_title":      "选择国家/地区",
+        "country_current":    "当前: {}",
+        "country_set_ok":     "已设置: {}",
+        "country_set_fail":   "设置失败",
+        "corner_tl_country":  "A:上",
+        "corner_tr_country":  "B:下",
+        "corner_bl_country":  "C:返回",
+        "corner_br_country":  "D:确认",
     },
     "en": {
         "scanning":    "Point WiFi QR code at camera",
@@ -69,7 +101,39 @@ _TEXTS = {
         "reset":       "Network reset to XGO2",
         "reset_hint":  "A:Reset",
         "exit_hint":   "C:Exit",
+        "manual_hint": "D:Manual",
         "qr_hint":     "Android/XGO-APP WiFi QR supported",
+        "wifi_list_title":    "Select WiFi",
+        "wifi_scanning":      "Scanning WiFi...",
+        "wifi_no_networks":   "No WiFi networks found",
+        "wifi_now":           "Now: {}",
+        "wifi_none":          "Not connected",
+        "password_title":     "Enter password",
+        "password_for":       "Password: {}",
+        "keyboard_shift":     "↑",
+        "keyboard_del":       "←",
+        "keyboard_space":     "SP",
+        "keyboard_ok":        "OK",
+        # Corner key hints — WiFi list
+        "corner_tl_list":     "A:Up",
+        "corner_tr_list":     "B:Down",
+        "corner_bl_list":     "C:Back",
+        "corner_br_list":     "D:Select",
+        # Corner key hints — Keyboard
+        "corner_tl_kb":       "A:Left",
+        "corner_tr_kb":       "B:Right",
+        "corner_bl_kb":       "C:Del",
+        "corner_br_kb":       "D:Select",
+        # Country selection
+        "country_hint":       "B:Country",
+        "country_title":      "Select Country/Region",
+        "country_current":    "Current: {}",
+        "country_set_ok":     "Set: {}",
+        "country_set_fail":   "Set Failed",
+        "corner_tl_country":  "A:Up",
+        "corner_tr_country":  "B:Down",
+        "corner_bl_country":  "C:Back",
+        "corner_br_country":  "D:OK",
     },
 }
 
@@ -89,7 +153,7 @@ def _connect_wifi(ssid: str, password: str, security: str = "wpa") -> bool:
     """
     def _run(args):
         r = subprocess.run(
-            args, capture_output=True, text=True
+            args, capture_output=True, text=True, input="pi\n"
         )
         out = (r.stdout + r.stderr).strip()
         if out:
@@ -98,20 +162,20 @@ def _connect_wifi(ssid: str, password: str, security: str = "wpa") -> bool:
 
     con_name = "luwu-wifi"
     # Remove any stale connection with same name
-    _run(["sudo", "nmcli", "connection", "delete", con_name])
+    _run(["sudo", "-S", "nmcli", "connection", "delete", con_name])
 
     # Build add command; key-mgmt based on QR T: field
     sec = security.upper()
     if sec in ("NOPASS", ""):
-        add_args = ["sudo", "nmcli", "connection", "add",
+        add_args = ["sudo", "-S", "nmcli", "connection", "add",
                     "type", "wifi", "con-name", con_name, "ssid", ssid]
     elif sec == "WEP":
-        add_args = ["sudo", "nmcli", "connection", "add",
+        add_args = ["sudo", "-S", "nmcli", "connection", "add",
                     "type", "wifi", "con-name", con_name, "ssid", ssid,
                     "wifi-sec.key-mgmt", "ieee8021x",
                     "wifi-sec.wep-key0", password]
     else:  # WPA / WPA2 / WPA3 / default
-        add_args = ["sudo", "nmcli", "connection", "add",
+        add_args = ["sudo", "-S", "nmcli", "connection", "add",
                     "type", "wifi", "con-name", con_name, "ssid", ssid,
                     "wifi-sec.key-mgmt", "wpa-psk",
                     "wifi-sec.psk", password]
@@ -122,11 +186,11 @@ def _connect_wifi(ssid: str, password: str, security: str = "wpa") -> bool:
         return False
 
     # Rescan so NetworkManager knows the AP is visible
-    _run(["sudo", "nmcli", "device", "wifi", "rescan"])
+    _run(["sudo", "-S", "nmcli", "device", "wifi", "rescan"])
     import time as _time; _time.sleep(2)
 
     # Bring up
-    up_args = ["sudo", "nmcli", "connection", "up", con_name]
+    up_args = ["sudo", "-S", "nmcli", "connection", "up", con_name]
     print(f"[wifi_setup] up: {' '.join(up_args)}", flush=True)
     return _run(up_args) == 0
 
@@ -144,6 +208,46 @@ class WifiSetupPage(QWidget):
         self._connecting_password = ""
         self._connecting_security = "wpa"
         self._frame_count = 0
+
+        # --- Country selection state ---
+        self._country_step = None         # None | "country_list"
+        self._country_list = [
+            ("CN","中国"),("US","美国"),("JP","日本"),
+            ("KR","韩国"),("DE","德国"),("GB","英国"),
+            ("FR","法国"),("TW","台湾"),("HK","香港"),
+            ("SG","新加坡"),("IN","印度"),("AU","澳大利亚"),
+            ("CA","加拿大"),("BR","巴西"),("RU","俄罗斯"),
+        ]
+        self._country_cursor = 0
+        self._country_current_code = ""
+
+        # --- Manual WiFi setup state ---
+        self._manual_step = None         # None | "wifi_list" | "keyboard"
+        self._wifi_list = []             # [(ssid, signal, security), ...]
+        self._wifi_cursor = 0
+        self._manual_ssid = ""
+        self._manual_security = ""
+        self._manual_password = ""
+        self._kb_shift = False           # keyboard shift state
+        self._kb_cursor_row = 0
+        self._kb_cursor_col = 0
+
+        # Keyboard layout: rows of (display_char, value_char_or_None)
+        # None value means special key (shift, del, space, ok)
+        self._kb_lower = [
+            [('1','1'),('2','2'),('3','3'),('4','4'),('5','5'),('6','6'),('7','7'),('8','8'),('9','9'),('0','0')],
+            [('q','q'),('w','w'),('e','e'),('r','r'),('t','t'),('y','y'),('u','u'),('i','i'),('o','o'),('p','p')],
+            [('a','a'),('s','s'),('d','d'),('f','f'),('g','g'),('h','h'),('j','j'),('k','k'),('l','l')],
+            [('↑',None),('z','z'),('x','x'),('c','c'),('v','v'),('b','b'),('n','n'),('m','m'),('←',None)],
+            [('.','.'),('-','-'),('_','_'),('@','@'),('SP',None),('确定',None)],
+        ]
+        self._kb_upper = [
+            [('1','1'),('2','2'),('3','3'),('4','4'),('5','5'),('6','6'),('7','7'),('8','8'),('9','9'),('0','0')],
+            [('Q','Q'),('W','W'),('E','E'),('R','R'),('T','T'),('Y','Y'),('U','U'),('I','I'),('O','O'),('P','P')],
+            [('A','A'),('S','S'),('D','D'),('F','F'),('G','G'),('H','H'),('J','J'),('K','K'),('L','L')],
+            [('↑',None),('Z','Z'),('X','X'),('C','C'),('V','V'),('B','B'),('N','N'),('M','M'),('←',None)],
+            [('.','.'),('-','-'),('_','_'),('@','@'),('SP',None),('确定',None)],
+        ]
 
         # --- Camera display (fullscreen background) ---
         self.camera_label = QLabel(self)
@@ -177,6 +281,19 @@ class WifiSetupPage(QWidget):
         self.corner_bl = QLabel(t("exit_hint"), self)
         self.corner_bl.setStyleSheet(corner_style)
 
+        self.corner_br = QLabel(t("manual_hint"), self)
+        self.corner_br.setStyleSheet(corner_style)
+
+        self.corner_tr = QLabel(t("country_hint"), self)
+        self.corner_tr.setStyleSheet(corner_style)
+
+        # --- Current WiFi label (top-center) ---
+        self.wifi_now_label = QLabel("", self)
+        self.wifi_now_label.setStyleSheet(
+            "color: #18df6b; font-size: 11px; font-weight: bold; "
+            "background-color: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 3px;"
+        )
+
         # --- Camera ---
         self.picam2 = None  # Picamera2 | None
         self.camera_active = False
@@ -190,6 +307,7 @@ class WifiSetupPage(QWidget):
         self._setup_keys_fifo()
 
         QTimer.singleShot(100, self._start_camera)
+        QTimer.singleShot(200, self._update_current_wifi)
 
     # ---- Camera lifecycle ----
     def _start_camera(self):
@@ -220,6 +338,15 @@ class WifiSetupPage(QWidget):
 
     # ---- Frame processing ----
     def _process_frame(self):
+        # Country selection mode
+        if self._country_step is not None:
+            self._draw_country_ui()
+            return
+        # Manual mode: draw custom UI instead of camera feed
+        if self._manual_step is not None:
+            self._draw_manual_ui()
+            return
+
         if not self.camera_active or self.picam2 is None:
             return
 
@@ -354,6 +481,8 @@ class WifiSetupPage(QWidget):
             self.status_label.setStyleSheet(
                 "color: #18df6b; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
             )
+            self._update_current_wifi()
+            self._reposition_wifi_label()
             print(f"[wifi_setup] Connected to {ssid}", flush=True)
         else:
             self._state = "failed"
@@ -363,6 +492,33 @@ class WifiSetupPage(QWidget):
                 "color: #ff6b6b; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
             )
             print(f"[wifi_setup] Failed to connect to {ssid}", flush=True)
+
+    # ---- Get current WiFi SSID ----
+    def _update_current_wifi(self):
+        try:
+            r = subprocess.run(
+                ["nmcli", "-t", "-f", "active,ssid", "device", "wifi"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in r.stdout.strip().split('\n'):
+                if ':' in line:
+                    parts = line.split(':', 1)
+                    if parts[0].lower() in ('yes', '是'):
+                        ssid = parts[1]
+                        self.wifi_now_label.setText(t("wifi_now", ssid))
+                        self._reposition_wifi_label()
+                        return
+            self.wifi_now_label.setText(t("wifi_none"))
+        except Exception:
+            self.wifi_now_label.setText("")
+        self._reposition_wifi_label()
+
+    def _reposition_wifi_label(self):
+        self.wifi_now_label.adjustSize()
+        w = self.width()
+        pad = 12
+        self.wifi_now_label.move((w - self.wifi_now_label.width()) // 2, pad + 4)
+        self.wifi_now_label.raise_()
 
     # ---- Reset to default network (threaded) ----
     def _reset_network(self):
@@ -380,6 +536,491 @@ class WifiSetupPage(QWidget):
 
         self._reset_worker = _ResetWorker()
         self._reset_worker.start()
+
+    # ================================================================
+    # Country selection (B key)
+    # ================================================================
+    def _enter_country_mode(self):
+        self._country_step = "country_list"
+        self._country_cursor = 0
+        # Use raspi-config to get the real alpha-2 country code
+        # (iw reg get returns internal kernel enum numbers, not alpha-2)
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "raspi-config", "nonint", "get_wifi_country"],
+                capture_output=True, text=True, timeout=5
+            )
+            self._country_current_code = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            self._country_current_code = ""
+
+        self.status_label.hide()
+        self.hint_label.hide()
+        self.corner_tl.hide()
+        self.corner_bl.hide()
+        self.corner_br.hide()
+        self.corner_tr.hide()
+        self.wifi_now_label.hide()
+
+    def _exit_country_mode(self):
+        self._country_step = None
+        self.status_label.show()
+        self.hint_label.show()
+        self.corner_tl.show()
+        self.corner_bl.show()
+        self.corner_br.show()
+        self.corner_tr.show()
+        self.wifi_now_label.show()
+        self._reposition_wifi_label()
+        self.status_label.setText(t("scanning"))
+        self.status_label.setStyleSheet(
+            "color: white; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+        )
+        self.hint_label.setText(t("qr_hint"))
+        self._state = "scanning"
+        self._frame_count = 0
+
+    def _country_key_handler(self, key):
+        n = len(self._country_list)
+        if key == Qt.Key.Key_Back:
+            self._exit_country_mode()
+        elif key == Qt.Key.Key_Left:
+            if n > 0:
+                self._country_cursor = (self._country_cursor - 1) % n
+        elif key == Qt.Key.Key_Right:
+            if n > 0:
+                self._country_cursor = (self._country_cursor + 1) % n
+        elif key == Qt.Key.Key_Enter or key == Qt.Key.Key_Return:
+            if n > 0 and self._country_cursor < n:
+                code = self._country_list[self._country_cursor][0]
+                self._apply_country(code)
+
+    def _apply_country(self, code):
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "raspi-config", "nonint", "do_wifi_country", code],
+                capture_output=True, text=True, timeout=15
+            )
+            if r.returncode == 0:
+                print(f"[wifi_setup] Country set to {code}", flush=True)
+            else:
+                print(f"[wifi_setup] Country set failed: {r.stderr}", flush=True)
+        except Exception as e:
+            print(f"[wifi_setup] Country set error: {e}", flush=True)
+        self._exit_country_mode()
+
+    def _draw_country_ui(self):
+        bg = Image.new('RGB', (320, 240), (10, 10, 26))
+        draw = ImageDraw.Draw(bg)
+        try:
+            font14 = ImageFont.truetype(FONT_PATH, 14)
+            font12 = ImageFont.truetype(FONT_PATH, 12)
+        except Exception:
+            font14 = ImageFont.load_default()
+            font12 = ImageFont.load_default()
+        self._draw_country_list(draw, font14, font12)
+        result = np.array(bg)
+        h, w, c = result.shape
+        qimg = QImage(result.data.tobytes(), w, h, w * c, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg).scaled(
+            self.camera_label.width(),
+            self.camera_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.camera_label.setPixmap(pixmap)
+
+    def _draw_country_list(self, draw, font_title, font_item):
+        title = t("country_title")
+        tw = draw.textbbox((0, 0), title, font=font_title)[2]
+        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+        if self._country_current_code:
+            sub = t("country_current", self._country_current_code)
+            stw = draw.textbbox((0, 0), sub, font=font_item)[2]
+            draw.text(((320 - stw) // 2, 24), sub, font=font_item, fill=(120, 200, 120))
+        start_y = 44
+        visible_start = max(0, self._country_cursor - 5)
+        visible_count = min(8, len(self._country_list))
+        for i in range(visible_start, min(visible_start + visible_count, len(self._country_list))):
+            code, name = self._country_list[i]
+            y = start_y + (i - visible_start) * 24
+            if i == self._country_cursor:
+                draw.rectangle([(2, y - 1), (318, y + 21)], fill=(40, 60, 120))
+            draw.text((10, y + 2), f"{code}  {name}", font=font_item, fill=(255, 255, 255))
+        self._draw_corners(draw, font_item, "country")
+
+    # ================================================================
+    # Manual WiFi setup (D key)
+    # ================================================================
+    def _enter_manual_mode(self):
+        self._manual_step = "wifi_list"
+        self._wifi_list = []
+        self._wifi_cursor = 0
+        self._manual_ssid = ""
+        self._manual_security = ""
+        self._manual_password = ""
+
+        # Hide camera-era labels
+        self.status_label.hide()
+        self.hint_label.hide()
+        self.corner_tl.hide()
+        self.corner_bl.hide()
+        self.corner_br.hide()
+        self.corner_tr.hide()
+        self.wifi_now_label.hide()
+
+        # NOTE: keep camera running — _process_frame() checks
+        # _manual_step first and draws manual UI, skipping camera.
+
+        class _WifiScanWorker(QThread):
+            result = Signal(list)
+            def run(self):
+                try:
+                    import subprocess as sp
+                    # Rescan first to get fresh results (nmcli does NOT need sudo)
+                    sp.run(
+                        ["nmcli", "device", "wifi", "rescan"],
+                        capture_output=True, text=True, timeout=15
+                    )
+                    import time as _t; _t.sleep(3)
+                    r = sp.run(
+                        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    lines = r.stdout.strip().split('\n') if r.stdout.strip() else []
+                    nets = []
+                    for line in lines:
+                        line = line.strip()
+                        if not line or line.startswith('*'):
+                            continue
+                        parts = line.split(':')
+                        if len(parts) >= 3:
+                            ssid = parts[0]
+                            if ssid:
+                                signal_strength = parts[1] if parts[1] else "0"
+                                security = parts[2] if parts[2] else "NOPASS"
+                                # Deduplicate by SSID (keep strongest)
+                                dup = False
+                                for j, (s, _, _) in enumerate(nets):
+                                    if s == ssid:
+                                        dup = True
+                                        if int(signal_strength) > int(nets[j][1]):
+                                            nets[j] = (ssid, signal_strength, security)
+                                        break
+                                if not dup:
+                                    nets.append((ssid, signal_strength, security))
+                    nets.sort(key=lambda x: -int(x[1]) if x[1].isdigit() else 0)
+                    self.result.emit(nets)
+                except Exception as e:
+                    print(f"[wifi_setup] scan error: {e}", flush=True)
+                    self.result.emit([])
+
+        self._scan_worker = _WifiScanWorker()
+        self._scan_worker.result.connect(self._on_wifi_scan_done)
+        self._scan_worker.start()
+        print("[wifi_setup] WiFi scan started", flush=True)
+
+    def _on_wifi_scan_done(self, nets):
+        self._wifi_list = nets
+        self._wifi_cursor = 0
+        print(f"[wifi_setup] found {len(nets)} networks", flush=True)
+
+    def _exit_manual_mode(self):
+        self._manual_step = None
+        self._wifi_list = []
+        self._manual_password = ""
+
+        # Show labels again
+        self.status_label.show()
+        self.hint_label.show()
+        self.corner_tl.show()
+        self.corner_bl.show()
+        self.corner_br.show()
+        self.corner_tr.show()
+        self.wifi_now_label.show()
+        self._reposition_wifi_label()
+
+        self.status_label.setText(t("scanning"))
+        self.status_label.setStyleSheet(
+            "color: white; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+        )
+        self.hint_label.setText(t("qr_hint"))
+        self._state = "scanning"
+        self._frame_count = 0
+
+        # Camera never stopped — no need to restart
+
+    def _manual_key_handler(self, key):
+        if self._manual_step == "wifi_list":
+            self._manual_wifi_list_key(key)
+        elif self._manual_step == "keyboard":
+            self._manual_keyboard_key(key)
+
+    def _manual_wifi_list_key(self, key):
+        n = len(self._wifi_list)
+        if key == Qt.Key.Key_Back:  # C → back to camera
+            self._exit_manual_mode()
+        elif key == Qt.Key.Key_Left:  # A → up
+            if n > 0:
+                self._wifi_cursor = (self._wifi_cursor - 1) % n
+        elif key == Qt.Key.Key_Right:  # B → down
+            if n > 0:
+                self._wifi_cursor = (self._wifi_cursor + 1) % n
+        elif key == Qt.Key.Key_Enter or key == Qt.Key.Key_Return:  # D → select
+            if n > 0 and self._wifi_cursor < n:
+                self._manual_ssid = self._wifi_list[self._wifi_cursor][0]
+                self._manual_security = self._wifi_list[self._wifi_cursor][2]
+                self._manual_password = ""
+                self._kb_shift = False
+                self._kb_cursor_row = 0
+                self._kb_cursor_col = 0
+                self._manual_step = "keyboard"
+
+    def _manual_keyboard_key(self, key):
+        kb = self._kb_upper if self._kb_shift else self._kb_lower
+
+        # Compute flat index and total count for cross-row wrapping
+        flat_idx = 0
+        for r in range(self._kb_cursor_row):
+            flat_idx += len(kb[r])
+        flat_idx += self._kb_cursor_col
+        total_keys = sum(len(row) for row in kb)
+
+        if key == Qt.Key.Key_Back:  # C → backspace if has input, else back to WiFi list
+            if self._manual_password:
+                self._manual_password = self._manual_password[:-1]
+            else:
+                self._manual_step = "wifi_list"
+            return
+        elif key == Qt.Key.Key_Left:  # A → left (wrap across rows)
+            flat_idx = (flat_idx - 1) % total_keys
+        elif key == Qt.Key.Key_Right:  # B → right (wrap across rows)
+            flat_idx = (flat_idx + 1) % total_keys
+        elif key == Qt.Key.Key_Enter or key == Qt.Key.Key_Return:  # D → select
+            display, value = kb[self._kb_cursor_row][self._kb_cursor_col]
+            if value is None:
+                # Special key
+                if display in ('↑',):
+                    self._kb_shift = not self._kb_shift
+                elif display in ('←',):
+                    self._manual_password = self._manual_password[:-1]
+                elif display in ('SP',):
+                    self._manual_password += ' '
+                elif display in ('确定', 'OK'):
+                    self._confirm_manual_connect()
+            else:
+                self._manual_password += value
+
+        # Convert flat index back to (row, col)
+        remaining = flat_idx
+        for r in range(len(kb)):
+            ncols = len(kb[r])
+            if remaining < ncols:
+                self._kb_cursor_row = r
+                self._kb_cursor_col = remaining
+                break
+            remaining -= ncols
+
+    def _confirm_manual_connect(self):
+        if not self._manual_ssid:
+            return
+        self._manual_step = None
+        self._connecting_ssid = self._manual_ssid
+        self._connecting_password = self._manual_password
+        self._connecting_security = self._manual_security
+        self._state = "connecting"
+
+        # Show labels again
+        self.status_label.show()
+        self.hint_label.show()
+        self.corner_tl.show()
+        self.corner_bl.show()
+        self.corner_br.show()
+        self.corner_tr.show()
+        self.wifi_now_label.show()
+
+        self.status_label.setText(t("connecting", self._manual_ssid))
+        self.status_label.setStyleSheet(
+            "color: cyan; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+        )
+        self.hint_label.setText(t("qr_hint"))
+
+        # Camera never stopped — no need to restart
+
+        QTimer.singleShot(100, self._do_connect)
+
+    # ---- Manual UI drawing (PIL-based) ----
+    def _draw_corners(self, draw, font, page_type="list"):
+        """Draw A/B/C/D corner labels with semi-transparent black backgrounds."""
+        if page_type == "list":
+            tl = t("corner_tl_list")
+            tr = t("corner_tr_list")
+            bl = t("corner_bl_list")
+            br = t("corner_br_list")
+        elif page_type == "country":
+            tl = t("corner_tl_country")
+            tr = t("corner_tr_country")
+            bl = t("corner_bl_country")
+            br = t("corner_br_country")
+        else:  # keyboard
+            tl = t("corner_tl_kb")
+            tr = t("corner_tr_kb")
+            bl = t("corner_bl_kb")
+            br = t("corner_br_kb")
+
+        margin = 3
+        pad = 3
+
+        for text, pos in [(tl, "tl"), (tr, "tr"), (bl, "bl"), (br, "br")]:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+
+            if pos == "tl":
+                x, y = margin, margin
+            elif pos == "tr":
+                x, y = 320 - tw - pad * 2 - margin, margin
+            elif pos == "bl":
+                x, y = margin, 240 - th - pad * 2 - margin
+            else:  # br
+                x, y = 320 - tw - pad * 2 - margin, 240 - th - pad * 2 - margin
+
+            # Semi-transparent black background
+            draw.rectangle(
+                [(x, y), (x + tw + pad * 2, y + th + pad * 2)],
+                fill=(0, 0, 0, 160)
+            )
+            draw.text((x + pad, y + pad), text, font=font, fill=(255, 255, 255))
+
+    def _draw_manual_ui(self):
+        bg = Image.new('RGB', (320, 240), (10, 10, 26))
+        draw = ImageDraw.Draw(bg)
+        try:
+            font14 = ImageFont.truetype(FONT_PATH, 14)
+            font12 = ImageFont.truetype(FONT_PATH, 12)
+            font11 = ImageFont.truetype(FONT_PATH, 11)
+        except Exception:
+            font14 = ImageFont.load_default()
+            font12 = ImageFont.load_default()
+            font11 = ImageFont.load_default()
+
+        if self._manual_step == "wifi_list":
+            self._draw_wifi_list(draw, font14, font12)
+        elif self._manual_step == "keyboard":
+            self._draw_keyboard(draw, font14, font12, font11)
+
+        result = np.array(bg)
+        h, w, c = result.shape
+        qimg = QImage(result.data.tobytes(), w, h, w * c, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg).scaled(
+            self.camera_label.width(),
+            self.camera_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.camera_label.setPixmap(pixmap)
+
+    def _draw_wifi_list(self, draw, font_title, font_item):
+        title = t("wifi_list_title")
+        tw = draw.textbbox((0, 0), title, font=font_title)[2]
+        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+
+        if not self._wifi_list:
+            draw.text((10, 40), t("wifi_scanning"), font=font_item, fill=(150, 150, 150))
+            self._draw_corners(draw, font_item, "list")
+            return
+
+        start_y = 28
+        visible_start = max(0, self._wifi_cursor - 4)
+        visible_count = min(8, len(self._wifi_list))
+
+        for i in range(visible_start, min(visible_start + visible_count, len(self._wifi_list))):
+            ssid, sig, sec = self._wifi_list[i]
+            y = start_y + (i - visible_start) * 24
+
+            # Cursor highlight
+            if i == self._wifi_cursor:
+                draw.rectangle([(2, y - 1), (318, y + 21)], fill=(40, 60, 120))
+
+            # Signal bar
+            try:
+                sval = int(sig)
+            except Exception:
+                sval = 0
+            bars = '▂▄▆█' if sval > 60 else ('▂▄▆' if sval > 40 else ('▂▄' if sval > 20 else '▂'))
+            color = (100, 255, 100) if sval > 60 else ((255, 200, 50) if sval > 30 else (255, 80, 80))
+            draw.text((6, y + 1), bars, font=font_item, fill=color)
+
+            # SSID (truncated)
+            display_ssid = ssid[:18] + '..' if len(ssid) > 20 else ssid
+            draw.text((52, y + 1), display_ssid, font=font_item, fill=(255, 255, 255))
+
+            # Security badge (asterisk = has security)
+            if sec.upper() not in ('', 'NOPASS'):
+                draw.text((280, y + 2), '*', font=font_item, fill=(200, 200, 200))
+
+        # Four-corner key hints
+        self._draw_corners(draw, font_item, "list")
+
+    def _draw_keyboard(self, draw, font_title, font_key, font_small):
+        # Title (centered)
+        pwd_display = self._manual_password[-20:] if len(self._manual_password) > 20 else self._manual_password
+        title = t("password_for", pwd_display if pwd_display else '_' * 8)
+        tw1 = draw.textbbox((0, 0), title, font=font_title)[2]
+        draw.text(((320 - tw1) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+
+        # Subtitle (centered)
+        sub = t("password_title")
+        tw2 = draw.textbbox((0, 0), sub, font=font_small)[2]
+        draw.text(((320 - tw2) // 2, 24), sub, font=font_small, fill=(120, 120, 120))
+
+        kb = self._kb_upper if self._kb_shift else self._kb_lower
+        key_w = 30
+        key_h = 24
+        margin_x = 10
+        start_y = 48
+        gap = 2
+
+        for row_idx, row in enumerate(kb):
+            y = start_y + row_idx * (key_h + gap)
+            # Center the row
+            row_width = len(row) * (key_w + gap) - gap
+            x = (320 - row_width) // 2
+
+            for col_idx, (display, value) in enumerate(row):
+                kx = x + col_idx * (key_w + gap)
+                # Key background
+                is_cursor = (row_idx == self._kb_cursor_row and col_idx == self._kb_cursor_col)
+                is_ok = (display in ('确定', 'OK'))
+
+                if is_cursor:
+                    if is_ok:
+                        # Highlighted green for confirm
+                        draw.rectangle([(kx - 1, y - 1), (kx + key_w, y + key_h)],
+                                       fill=(30, 180, 60), outline=(255, 255, 255))
+                    else:
+                        draw.rectangle([(kx - 1, y - 1), (kx + key_w, y + key_h)],
+                                       fill=(60, 120, 220), outline=(255, 255, 255))
+                else:
+                    if is_ok:
+                        # Standout green for confirm button
+                        draw.rectangle([(kx, y), (kx + key_w - 1, y + key_h - 1)],
+                                       fill=(20, 130, 40))
+                    else:
+                        is_special = (value is None)
+                        draw.rectangle([(kx, y), (kx + key_w - 1, y + key_h - 1)],
+                                       fill=(60, 60, 80) if is_special else (50, 50, 65))
+
+                # Key label
+                text_color = (255, 255, 255)
+                bbox = draw.textbbox((0, 0), display, font=font_small)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+                draw.text((kx + (key_w - tw) // 2, y + (key_h - th) // 2 - 1),
+                          display, font=font_small, fill=text_color)
+
+        # Four-corner key hints
+        self._draw_corners(draw, font_small, "kb")
 
     # ---- Keys FIFO from launcher ----
     def _setup_keys_fifo(self):
@@ -406,12 +1047,31 @@ class WifiSetupPage(QWidget):
 
     # ---- Key events (aligned with luwu-keys.dts) ----
     def keyPressEvent(self, ev: QKeyEvent):
-        if ev.key() == Qt.Key.Key_Back:   # C button (KEY_BACK) → exit
+        key = ev.key()
+
+        # --- Country mode key handling ---
+        if self._country_step is not None:
+            self._country_key_handler(key)
+            return
+
+        # --- Manual mode key handling ---
+        if self._manual_step is not None:
+            self._manual_key_handler(key)
+            return
+
+        # --- Normal mode ---
+        if key == Qt.Key.Key_Back:   # C button (KEY_BACK) → exit
             print("[wifi_setup] KEY_BACK (C) pressed → exit", flush=True)
             self.close()
-        elif ev.key() == Qt.Key.Key_Left:  # A button (KEY_LEFT) → reset
+        elif key == Qt.Key.Key_Left:  # A button (KEY_LEFT) → reset
             print("[wifi_setup] KEY_LEFT (A) pressed → reset network", flush=True)
             self._reset_network()
+        elif key == Qt.Key.Key_Right:  # B button (KEY_RIGHT) → country
+            print("[wifi_setup] KEY_RIGHT (B) pressed → country", flush=True)
+            self._enter_country_mode()
+        elif key == Qt.Key.Key_Enter or key == Qt.Key.Key_Return:  # D button → manual
+            print("[wifi_setup] KEY_ENTER (D) pressed → manual setup", flush=True)
+            self._enter_manual_mode()
 
     # ---- Resize ----
     def resizeEvent(self, ev):
@@ -441,6 +1101,21 @@ class WifiSetupPage(QWidget):
         self.corner_bl.raise_()
         self.corner_bl.adjustSize()
         self.corner_bl.move(pad, h - self.corner_bl.height() - pad - 4)
+
+        # Bottom-right corner
+        self.corner_br.raise_()
+        self.corner_br.adjustSize()
+        self.corner_br.move(w - self.corner_br.width() - pad, h - self.corner_br.height() - pad - 4)
+
+        # Top-right corner (country)
+        self.corner_tr.raise_()
+        self.corner_tr.adjustSize()
+        self.corner_tr.move(w - self.corner_tr.width() - pad, pad + 4)
+
+        # Current WiFi label (top-center, no width limit)
+        self.wifi_now_label.raise_()
+        self.wifi_now_label.adjustSize()
+        self.wifi_now_label.move((w - self.wifi_now_label.width()) // 2, pad + 4)
 
     # ---- Close ----
     def closeEvent(self, ev):

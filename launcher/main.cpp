@@ -77,13 +77,20 @@ int main(int argc, char *argv[]) {
                                       .arg(QDateTime::currentMSecsSinceEpoch()).arg(code).arg(int(st)).arg(total);
             keyFilter->blocked = false;
             unlink(KEYS_FIFO);
+            // 恢复桌面显示：先 show + force paint，再切回主页
             stack.showFullScreen();
-            stack.repaint();  // force immediate redraw to avoid black screen
-            // 切回主菜单
+            QApplication::processEvents();  // 确保窗口系统处理 show 事件
+            stack.repaint();
+            QApplication::processEvents();  // 强制提交 framebuffer
             stack.setCurrentIndex(0);
             stack.repaint();
+            QApplication::processEvents();  // 确保页面切换后的重绘完成
             gallery->setFocus();
-            QTimer::singleShot(300, &stack, startPreload);
+            // 延迟恢复 preload 进程，同时兜底重绘防黑屏
+            QTimer::singleShot(300, &stack, [&]() {
+                stack.repaint();
+                startPreload();
+            });
         });
 
     auto launchApp = [&](const QString &script) {
