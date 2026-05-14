@@ -135,6 +135,30 @@ def hand_pos(angle):
             pos = 'Stone'
     
     return pos
+
+# 手部关键点连接（用于绘制骨架），基于 MediaPipe 21 点模型
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),       # 拇指
+    (0, 5), (5, 6), (6, 7), (7, 8),       # 食指
+    (0, 9), (9, 10), (10, 11), (11, 12),  # 中指
+    (0, 13), (13, 14), (14, 15), (15, 16),# 无名指
+    (0, 17), (17, 18), (18, 19), (19, 20),# 小指
+    (5, 9), (9, 13), (13, 17),             # 指根横向
+]
+
+def draw_hand_landmarks(img, pts, color=(0, 255, 0), thickness=2):
+    """在手部图像上绘制 21 个关键点和连接线。"""
+    h, w = img.shape[:2]
+    for x, y in pts:
+        if 0 <= x < w and 0 <= y < h:
+            cv2.circle(img, (x, y), 3, color, -1)
+    for i, j in HAND_CONNECTIONS:
+        if i < len(pts) and j < len(pts):
+            x1, y1 = pts[i]
+            x2, y2 = pts[j]
+            if 0 <= x1 < w and 0 <= y1 < h and 0 <= x2 < w and 0 <= y2 < h:
+                cv2.line(img, (x1, y1), (x2, y2), color, thickness)
+
 def color(value):
   digit = list(map(str, range(10))) + list("ABCDEF")
   value = value.upper()
@@ -1028,145 +1052,50 @@ class XGOEDU():
     '''
     def gestureRecognition(self, target="camera"):
         ges = ''
-        # 优化手势识别参数，提高检测精度
+        center = (0, 0)
         if self.hand is None:
-            self.hand = hands(1, 2, 0.7, 0.7)  # 提高检测和跟踪置信度
-        
-        # 图像采集优化
+            self.hand = hands(1, 2, 0.7, 0.7)
+
         if target == "camera":
             self.open_camera()
-            time.sleep(0.5)  # 给摄像头稳定时间
-            # 多帧采集，提高稳定性
-            stable_image = None
-            for _ in range(3):
-                frame = self.picam2.capture_array()
-                if stable_image is None:
-                    stable_image = frame
-                time.sleep(0.1)
-            image = cv2.cvtColor(stable_image, cv2.COLOR_BGR2RGB)
+            time.sleep(0.3)
+            image_bgr = self.picam2.capture_array()
+            if image_bgr is None:
+                return None
         else:
             path = "/home/pi/xgoPictures/" if not target.startswith('/') else ""
-            image = np.array(Image.open(path + target).convert('RGB'))
-        
-        # 图像预处理优化 - 提高识别准确性
-        # 1. 降噪处理
-        image = cv2.bilateralFilter(image, 9, 75, 75)
-        # 2. 对比度增强
-        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        l = clahe.apply(l)
-        image = cv2.merge([l, a, b])
-        image = cv2.cvtColor(image, cv2.COLOR_LAB2RGB)
-        
-        # 水平镜像（自拍模式）
-        image = cv2.flip(image, 1)
-        
-        # 手势识别优化 - 多次检测取最稳定结果
-        best_data = None
-        best_confidence = 0
-        
-        # 尝试3次检测，选择最佳结果
-        for attempt in range(3):
-            try:
-                # 轻微变换图像角度提高检测率
-                if attempt == 1:
-                    # 轻微旋转
-                    rows, cols = image.shape[:2]
-                    M = cv2.getRotationMatrix2D((cols/2, rows/2), 2, 1)
-                    test_image = cv2.warpAffine(image, M, (cols, rows))
-                elif attempt == 2:
-                    # 轻微缩放
-                    test_image = cv2.resize(image, None, fx=1.1, fy=1.1)
-                    test_image = cv2.resize(test_image, (image.shape[1], image.shape[0]))
-                else:
-                    test_image = image.copy()
-                
-                datas = self.hand.run(cv2.cvtColor(test_image, cv2.COLOR_RGB2BGR))
-                
-                if datas:
-                    for data in datas:
-                        # 计算手势置信度（基于手部区域大小和关键点质量）
-                        rect = data['rect']
-                        dlandmark = data['dlandmark']
-                        
-                        # 手部区域大小合理性检查
-                        area = rect[2] * rect[3]
-                        if area < 1000 or area > 50000:  # 过小或过大的区域可能不准确
-                            continue
-                            
-                        # 关键点质量检查
-                        if len(dlandmark) < 20:  # MediaPipe手部模型有21个关键点
-                            continue
-                            
-                        # 计算手势角度的稳定性
-                        hand_angle = data['hand_angle']
-                        if not hand_angle or len(hand_angle) != 5:
-                            continue
-                            
-                        # 简单的置信度评分
-                        confidence = area / 10000.0  # 基于区域大小
-                        confidence += len(dlandmark) / 21.0  # 基于关键点完整性
-                        
-                        if confidence > best_confidence:
-                            best_confidence = confidence
-                            best_data = data
-                            
-            except Exception as e:
-                continue
-        
-        # 使用最佳检测结果进行绘制
-        if best_data:
-            data = best_data
-            rect = data['rect']
-            right_left = data['right_left']
-            center = data['center']
-            dlandmark = data['dlandmark']
-            hand_angle = data['hand_angle']
-            
-            # 手势角度后处理 - 平滑化处理
-            smoothed_angles = []
-            for angle in hand_angle:
-                # 角度范围限制和平滑
-                if angle < 0:
-                    angle = 0
-                elif angle > 180:
-                    angle = 180
-                smoothed_angles.append(angle)
-            
-            # 绘制手部区域
-            cv2.rectangle(image, 
-                         (rect[0], rect[1]),
-                         (rect[0]+rect[2], rect[1]+rect[3]),
-                         (51, 204, 0), 2)  # RGB格式的绿色
-            
-            # 显示手势结果
-            ges = hand_pos(smoothed_angles)
-            if ges:  # 只有识别到有效手势才显示
-                text_pos = (180, 80) if right_left == 'L' else (50, 80)
-                color = (51, 204, 0) if right_left == 'L' else (255, 0, 0)
-                cv2.putText(image, ges, text_pos,
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                
-                # 显示置信度
-                conf_text = f"Conf: {best_confidence:.2f}"
-                cv2.putText(image, conf_text, (text_pos[0], text_pos[1] + 25),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-            
-            # 绘制关键点（只绘制重要的关键点）
-            important_points = [0, 4, 8, 12, 16, 20]  # 指尖和手腕
-            for i, point in enumerate(dlandmark):
-                if i in important_points:
-                    cv2.circle(image, (int(point[0]), int(point[1])),
-                              4, (255, 153, 0), -1)  # RGB格式的橙色
-                else:
-                    cv2.circle(image, (int(point[0]), int(point[1])),
-                              2, (255, 204, 153), -1)  # 淡橙色
-        
-        # 显示结果
-        imgok = Image.fromarray(image)  # PIL需要RGB格式
+            image_bgr = cv2.imread(path + target)
+            if image_bgr is None:
+                return None
+
+        # 水平镜像
+        image_bgr = cv2.flip(image_bgr, 1)
+
+        # 单次 ONNX 推理（hands.run 需要 BGR 输入）
+        datas = self.hand.run(image_bgr)
+
+        # 转为 RGB 用于显示
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+        if datas:
+            for data in datas:
+                pts = data['dlandmark']
+                center = data['center']
+                # 绘制手部骨架（21个关键点 + 连接线）
+                draw_hand_landmarks(image_rgb, pts, color=(0, 255, 0), thickness=2)
+                # 手势识别
+                g = hand_pos(data['hand_angle'])
+                if g:
+                    ges = g
+
+        # 绘制手势名称（与 main.py 一致的显示风格）
+        if ges:
+            cv2.putText(image_rgb, ges, (10, 40),
+                        cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 255, 0), 2)
+
+        imgok = Image.fromarray(image_rgb)
         self._show_pil(imgok)
-        
+
         return (ges, center) if ges else None
     '''
     yolo
@@ -1175,7 +1104,7 @@ class XGOEDU():
         ret=''
         self.open_camera()
         if self.yolo==None:
-            self.yolo = yoloXgo('/home/pi/luwu-os/model/Model.onnx',
+            self.yolo = yoloXgo('/home/pi/luwu-os/model/yolo_coco.onnx',
             ['person','bicycle','car','motorbike','aeroplane','bus','train','truck','boat','traffic light','fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow','elephant','bear','zebra','giraffe','backpack','umbrella','handbag','tie','suitcase','frisbee','skis','snowboard','sports ball','kite','baseball bat','baseball glove','skateboard','surfboard','tennis racket','bottle','wine glass','cup','fork','knife','spoon','bowl','banana','apple','sandwich','orange','broccoli','carrot','hot dog','pizza','donut','cake','chair','sofa','pottedplant','bed','diningtable','toilet','tvmonitor','laptop','mouse','remote','keyboard','cell phone','microwave','oven','toaster','sink','refrigerator','book','clock','vase','scissors','teddy bear','hair drier','toothbrush'],
             [352,352],0.66)
         if target=="camera":
@@ -1330,15 +1259,25 @@ class XGOEDU():
         else:
             return ret
     '''
-    年纪及性别检测
+    年纪及性别检测 - 使用 onnxruntime + gender_age.onnx + YuNet 人脸检测
     '''
     def agesex(self, target="camera"):
-        ret = ''
-        MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
+        import onnxruntime as ort
+        AGESEX_MODEL = '/home/pi/luwu-os/model/gender_age.onnx'
         ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
         genderList = ['Male', 'Female']
         padding = 20
-        
+        ret = ''
+
+        if self.agesexmark is None:
+            if not os.path.exists(AGESEX_MODEL):
+                print(f'[agesex] 缺少模型文件: {AGESEX_MODEL}')
+                return None
+            self.face_detector = face_detection(min_detection_confidence=0.7)
+            self.agesex_session = ort.InferenceSession(AGESEX_MODEL)
+            self._agesex_input = self.agesex_session.get_inputs()[0].name
+            self.agesexmark = True
+
         if target == "camera":
             self.open_camera()
             image = self.picam2.capture_array()
@@ -1348,45 +1287,52 @@ class XGOEDU():
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
             image = np.array(Image.open(target))
-        
-        if self.agesexmark == None:
-            faceProto = "/home/pi/luwu-os/model/opencv_face_detector.pbtxt"
-            faceModel = "/home/pi/luwu-os/model/opencv_face_detector_uint8.pb"
-            ageProto = "/home/pi/luwu-os/model/age_deploy.prototxt"
-            ageModel = "/home/pi/luwu-os/model/age_net.caffemodel"
-            genderProto = "/home/pi/luwu-os/model/gender_deploy.prototxt"
-            genderModel = "/home/pi/luwu-os/model/gender_net.caffemodel"
-            self.ageNet = cv2.dnn.readNet(ageModel, ageProto)
-            self.genderNet = cv2.dnn.readNet(genderModel, genderProto)
-            self.faceNet = cv2.dnn.readNet(faceModel, faceProto)
-            self.agesexmark = True
-    
-        image = cv2.flip(image, 1)
-        frameFace, bboxes = getFaceBox(self.faceNet, image)
+
+        # YuNet 人脸检测 (需要 BGR 输入)
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        faces = self.face_detector.run(image_bgr)
+        image_disp = image_bgr.copy()
+
         gender = ''
         age = ''
-        
-        for bbox in bboxes:
-            face = image[max(0, bbox[1]-padding):min(bbox[3]+padding, image.shape[0]-1),
-                        max(0, bbox[0]-padding):min(bbox[2]+padding, image.shape[1]-1)]
-            blob = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-            
-            self.genderNet.setInput(blob)
-            genderPreds = self.genderNet.forward()
-            gender = genderList[genderPreds[0].argmax()]
-            
-            self.ageNet.setInput(blob)
-            agePreds = self.ageNet.forward()
-            age = ageList[agePreds[0].argmax()]
-            
+
+        for face in faces:
+            x, y, w, h = face['rect']
+            # 裁剪人脸区域（带 padding）
+            x1 = max(0, x - padding)
+            y1 = max(0, y - padding)
+            x2 = min(image.shape[1], x + w + padding)
+            y2 = min(image.shape[0], y + h + padding)
+            face_img = image[y1:y2, x1:x2]
+
+            # 预处理: resize 到 62x62, 归一化 [0,1]
+            face_input = cv2.resize(face_img, (62, 62))
+            face_input = face_input.astype(np.float32) / 255.0
+            face_input = face_input[np.newaxis, :, :, :]  # [1, 62, 62, 3]
+
+            outputs = self.agesex_session.run(None, {self._agesex_input: face_input})
+            gender_preds = outputs[0]   # [1, 1, 1, 2]
+            age_pred = outputs[1]        # [1, 1, 1, 1]
+
+            gender_idx = int(np.argmax(gender_preds[0][0][0]))
+            gender = genderList[gender_idx]
+
+            age_val = float(age_pred[0][0][0][0]) * 100  # 模型输出归一化值(0~1)，乘以100得到实际年龄
+            # 将年龄回归值映射到最近的年龄段
+            age_centers = [1, 5, 10, 17.5, 28.5, 40.5, 50.5, 80]
+            closest_idx = min(range(len(age_centers)), key=lambda i: abs(age_centers[i] - age_val))
+            age = ageList[closest_idx]
+
             label = "{},{}".format(gender, age)
-            cv2.putText(frameFace, label, (bbox[0], bbox[1]-10), 
+            cv2.putText(image_disp, label, (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-            ret = (gender, age, (bbox[0], bbox[1]))
-        
-        imgok = Image.fromarray(frameFace)
+            cv2.rectangle(image_disp, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            ret = (gender, age, (x, y))
+
+        image_disp = cv2.flip(image_disp, 1)
+        imgok = Image.fromarray(cv2.cvtColor(image_disp, cv2.COLOR_BGR2RGB))
         self._show_pil(imgok)
-        
+
         if ret == '':
             return None
         else:

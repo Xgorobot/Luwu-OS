@@ -24,6 +24,7 @@
 | 7 | 机器狗 UART | ttyAMA0 (PL011) → 迁移到其他 UART | xgolib_dog.py | 跟蓝牙抢串口 | 不写死 + 传参 + 自动扫描 |
 | 8 | 舵机/机械臂/IMU/电池 | UART → 下位机 MCU | xgolib_dog.py 转发 | 无 | ✅ 无需改动 |
 | 9 | 散热风扇 (4线 PWM) | GPIO PWM + TACH | pwm-fan 内核驱动 (hwmon2) | 无 | ✅ 温控自动调速 |
+| 10 | CM5 电源 + 电池 | VC 电压监控 + ttyAMA0 电池查询 | vcgencmd + xgolib pip 包 | 瞬时欠压误关机 | 电池联合分级响应 (见改造 8) |
 
 ---
 
@@ -259,6 +260,67 @@ config.txt → dtparam=fan_temp → pwm-fan 内核驱动 → /sys/class/hwmon/hw
 
 ---
 
+---
+
+## 改造 8：CM5 欠压 + 电池联合监控
+
+### 背景
+CM5 在高功耗场景（摄像头 + ONNX 推理 + WiFi）下瞬时功耗可达 15~20W，若降压模块输出能力不足会导致 5V 跌落、触发 VC 固件欠压检测（`throttled` bit0）。单纯依赖欠压定时关机可能在比赛/演示中误关机，需结合真实电池电量做分级响应。
+
+### 目标
+```
+vcgencmd (CM5 电压) + xgolib.read_battery() (狗电池 %) → 联合判断 → 分级响应
+```
+
+### 电池数据共享架构
+```
+xgolib pip 包 (ttyAMA0 串口)
+        │
+luwu-undervolt-monitor.py (systemd 服务，单一写入者)
+        │
+        ├─ /tmp/luwu_battery_level     ← Qt 状态栏、任何 App 只读
+        └─ /tmp/luwu_undervolt_status  ← 上层 UI 读取告警状态
+```
+
+| 文件 | 写入者 | 读者 | 更新频率 |
+|------|--------|------|---------|
+| `/tmp/luwu_battery_level` | luwu-undervolt-monitor.py (唯一) | Qt 状态栏、任何 App | 2 秒 |
+| `/tmp/luwu_undervolt_status` | luwu-undervolt-monitor.py (唯一) | 上层 UI | 欠压变化时 |
+
+### 分级响应逻辑
+
+| 电池 | 欠压行为 |
+|------|---------|
+| \> 10% | 忽略瞬时欠压，只记日志（比赛不受影响） |
+| 5% ~ 10% | 欠压持续超 10 秒 → `shutdown -h now` |
+| < 5% | 立即关机 |
+
+> **设计理由**：电池 > 10% 时的欠压通常是瞬时功耗峰值超过降压模块能力（如摄像头启动），CM5 硬件会自动降频保护，无需软件干预。仅当电池确实耗尽时执行保护关机。
+
+### 相关文件
+
+| 文件 | 用途 |
+|------|------|
+| `/usr/local/bin/luwu-undervolt-monitor.py` | 联合监控 Python 脚本（单文件，含电池读取 + 欠压判断 + 分级关机） |
+| `/etc/systemd/system/luwu-undervolt.service` | systemd 服务（开机自启，自动重启） |
+| `/home/pi/luwu-os/configs/luwu-undervolt-monitor.py` | install.sh 部署源 |
+| `/home/pi/luwu-os/configs/luwu-undervolt.service` | install.sh 部署源 |
+| `/home/pi/luwu-os/launcher/statusbar.cpp` | Qt 状态栏，读 `/tmp/luwu_battery_level` 显示电量 |
+
+### 其他防护层（已在 install.sh 中部署）
+
+| 防护 | 机制 |
+|------|------|
+| ext4 `commit=1` | 断电最多丢 1 秒数据 |
+| `tune2fs -c 5` | 每 5 次挂载自动 fsck 修复 |
+| 硬件看门狗 | 15 秒超时，系统卡死自动重启 |
+| 持久化日志 | `/var/log/journal`，重启不丢 |
+
+### 效果
+- 电池充足时不当关机，比赛/演示不中断
+- 电池耗尽时自动保护关机，文件系统不损坏
+- 电池数据单点写入，多消费者零冲突
+
 ## 终局架构图
 
 ```
@@ -272,6 +334,7 @@ SPI LCD      → fbtft 内核驱动     → /dev/fb-spi（udev）→ mmap 写
 麦克风       → ALSA dsnoop        → Capture PCM    → 多 App 录音
 机器狗串口   → xgolib_dog.py      → RP1 UARTx（参数化）→ 单程序
 散热风扇     → pwm-fan 内核驱动   → hwmon2          → 温控自动
+CM5 电源+电池 → vcgencmd + xgolib   → /tmp/luwu_battery_level → 多 App 只读
 ```
 
 ## 相关代码
@@ -290,6 +353,12 @@ SPI LCD      → fbtft 内核驱动     → /dev/fb-spi（udev）→ mmap 写
 | `/home/pi/lib/xgoscreen/` | 老 LCD spidev 驱动，已废弃，被 fbtft + PySide6 替代 |
 | `/etc/asound.conf` | ALSA dmix/dsnoop 配置，多 App 音频共享 |
 | `/var/lib/alsa/asound.state` | 混音器持久化状态（啸叫修复 + 默认音量）|
+| `/usr/local/bin/luwu-undervolt-monitor.py` | 欠压+电池联合监控脚本（Python，systemd 服务）|
+| `/etc/systemd/system/luwu-undervolt.service` | 欠压监控 systemd 服务 |
+| `/home/pi/luwu-os/configs/luwu-undervolt-monitor.py` | 监控脚本 install.sh 部署源 |
+| `/home/pi/luwu-os/configs/luwu-undervolt.service` | 监控服务 install.sh 部署源 |
+| `/home/pi/luwu-os/launcher/statusbar.cpp` | Qt 状态栏（时间+电池，读 `/tmp/luwu_battery_level`）|
+| `/home/pi/luwu-os/launcher/statusbar.h` | 状态栏头文件 |
 
 ---
 
