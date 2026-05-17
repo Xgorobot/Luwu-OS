@@ -399,6 +399,9 @@ CMakeFiles/luwu_launcher.dir/demogridview.cpp.o: \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qvector.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/QRect \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qrect.h \
+ /home/pi/luwu-os/launcher/i18n.h \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/QString \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/qstring.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/QPainter \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qpainter.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qtextoption.h \

@@ -61,7 +61,7 @@ WiFi 监管域（Regulatory Domain）影响可用信道。中国（CN）支持 2
 
 ### 1.6 语言支持
 
-App 通过 `/home/pi/XGO-PI-CM5/common/language/language.ini` 检测系统语言，自动切换中文 / 英文界面。
+App 通过 `/home/pi/luwu-os/configs/language.ini` 检测系统语言，自动切换中文 / 英文界面。
 
 ### 1.7 典型使用流程
 

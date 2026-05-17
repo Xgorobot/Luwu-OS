@@ -53,6 +53,56 @@ from xgolib import XGO
 
 mark("xgolib import done")
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "🎭 群组表演",
+            "room_connecting": "房间: 连接中...",
+            "room": "🏠 房间: {}",
+            "devices": "📡 在线设备: {}",
+            "devices_init": "在线设备: 0",
+            "mqtt_connecting": "MQTT: 连接中...",
+            "mqtt_connected": "🟢 MQTT 已连接",
+            "mqtt_disconnected": "🔴 MQTT 未连接",
+            "network_warn": "⚠ 网络未连接",
+            "dog_type": "设备型号: {}",
+            "status_idle": "就绪 - 等待开始",
+            "status_idle2": "⏸ 就绪 - 等待开始",
+            "status_perform": "🎬 表演中...",
+            "action_list_title": "— 动作列表 —",
+            "corner_switch": "◀ ▶ : 切换",
+            "corner_start": "D: 开始表演",
+            "corner_stop": "D: 停止表演",
+            "corner_exit": "C: 退出",
+        },
+        "en": {
+            "title": "🎭 Group Performance",
+            "room_connecting": "Room: connecting...",
+            "room": "🏠 Room: {}",
+            "devices": "📡 Online devices: {}",
+            "devices_init": "Online devices: 0",
+            "mqtt_connecting": "MQTT: connecting...",
+            "mqtt_connected": "🟢 MQTT connected",
+            "mqtt_disconnected": "🔴 MQTT disconnected",
+            "network_warn": "⚠ No network",
+            "dog_type": "Device: {}",
+            "status_idle": "Ready - Waiting",
+            "status_idle2": "⏸ Ready - Waiting",
+            "status_perform": "🎬 Performing...",
+            "action_list_title": "— Action List —",
+            "corner_switch": "◀ ▶ : Switch",
+            "corner_start": "D: Start",
+            "corner_stop": "D: Stop",
+            "corner_exit": "C: Exit",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
+
 # ===================== 常量 =====================
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
@@ -536,7 +586,7 @@ class GroupPerformPage(QWidget):
         self._first_paint_logged = False
 
         # ---- 标题 ----
-        self.title = QLabel("🎭 群组表演")
+        self.title = QLabel(_T("title"))
         f1 = QFont()
         f1.setPointSize(18)
         f1.setBold(True)
@@ -550,16 +600,16 @@ class GroupPerformPage(QWidget):
         self.sep1.setStyleSheet("color: #2a3050;")
 
         # ---- 房间信息 ----
-        self.room_label = QLabel("房间: 连接中...")
+        self.room_label = QLabel(_T("room_connecting"))
         self.room_label.setStyleSheet("color: #64b5f6; font-size: 14px;")
         self.room_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.device_label = QLabel("在线设备: 0")
+        self.device_label = QLabel(_T("devices_init"))
         self.device_label.setStyleSheet("color: #8892c9; font-size: 13px;")
         self.device_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 连接状态 ----
-        self.conn_label = QLabel("MQTT: 连接中...")
+        self.conn_label = QLabel(_T("mqtt_connecting"))
         self.conn_label.setStyleSheet("color: #ffa726; font-size: 12px;")
         self.conn_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -568,17 +618,17 @@ class GroupPerformPage(QWidget):
         self.network_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 狗类型 ----
-        self.dog_label = QLabel(f"设备型号: {dog_type}")
+        self.dog_label = QLabel(_T("dog_type", dog_type))
         self.dog_label.setStyleSheet("color: #5c6a9c; font-size: 11px;")
         self.dog_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 状态 ----
-        self.status_label = QLabel("就绪 - 等待开始")
+        self.status_label = QLabel(_T("status_idle"))
         self.status_label.setStyleSheet("color: #18df6b; font-size: 14px;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 动作列表标题 ----
-        self.action_title = QLabel("— 动作列表 —")
+        self.action_title = QLabel(_T("action_list_title"))
         self.action_title.setStyleSheet("color: #5c6a9c; font-size: 11px;")
         self.action_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -608,12 +658,12 @@ class GroupPerformPage(QWidget):
 
         # ---- 提示 ----
         hint_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_tl = QLabel("◀ ▶ : 切换", self)
+        self.corner_tl = QLabel(_T("corner_switch"), self)
         self.corner_tl.setStyleSheet(hint_style)
-        self.corner_tr = QLabel("D: 开始表演", self)
+        self.corner_tr = QLabel(_T("corner_start"), self)
         self.corner_tr.setStyleSheet(hint_style)
         self.corner_tr.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.corner_bl = QLabel("C: 退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(hint_style)
         self.corner_br = QLabel("", self)
         self.corner_br.setStyleSheet(hint_style)
@@ -678,37 +728,37 @@ class GroupPerformPage(QWidget):
         """刷新UI显示"""
         # 连接状态
         if mqtt_client and mqtt_client.is_connected():
-            self.conn_label.setText("🟢 MQTT 已连接")
+            self.conn_label.setText(_T("mqtt_connected"))
             self.conn_label.setStyleSheet("color: #18df6b; font-size: 12px;")
         else:
-            self.conn_label.setText("🔴 MQTT 未连接")
+            self.conn_label.setText(_T("mqtt_disconnected"))
             self.conn_label.setStyleSheet("color: #ff5252; font-size: 12px;")
 
         # 网络状态
         if check_network():
             self.network_label.setText("")
         else:
-            self.network_label.setText("⚠ 网络未连接")
+            self.network_label.setText(_T("network_warn"))
             self.network_label.setStyleSheet("color: #ffa726; font-size: 11px;")
 
         # 房间号
         if room_id:
-            self.room_label.setText(f"🏠 房间: {room_id}")
+            self.room_label.setText(_T("room", room_id))
 
         # 在线设备数
         with known_devices_lock:
             count = len(known_devices)
-        self.device_label.setText(f"📡 在线设备: {count}")
+        self.device_label.setText(_T("devices", count))
 
         # 表演状态
         if group_perform:
-            self.status_label.setText("🎬 表演中...")
+            self.status_label.setText(_T("status_perform"))
             self.status_label.setStyleSheet("color: #ff9800; font-size: 14px;")
-            self.corner_tr.setText("D: 停止表演")
+            self.corner_tr.setText(_T("corner_stop"))
         else:
-            self.status_label.setText("⏸ 就绪 - 等待开始")
+            self.status_label.setText(_T("status_idle2"))
             self.status_label.setStyleSheet("color: #18df6b; font-size: 14px;")
-            self.corner_tr.setText("D: 开始表演")
+            self.corner_tr.setText(_T("corner_start"))
 
     def _check_performance(self):
         """监控表演状态，触发动作执行"""

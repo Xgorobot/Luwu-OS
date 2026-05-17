@@ -42,6 +42,64 @@ from PySide6.QtWidgets import (
 
 mark("imports done")
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "小球抓取",
+            "starting": "启动中...",
+            "ready": "就绪",
+            "info_idle": "按 D(右) 开始抓取 | C(下) 切换颜色",
+            "info_catching": "正在抓取中... 按 D(右) 停止 | C(下) 换色",
+            "corner_exit": "A: 退出",
+            "corner_b": "B: —",
+            "corner_color": "C: 换色",
+            "corner_catch": "D: 抓取",
+            "corner_stop": "D: 停止",
+            "btn_red": "🔴 红色",
+            "btn_green": "🟢 绿色",
+            "btn_blue": "🔵 蓝色",
+            "color_red": "红色",
+            "color_green": "绿色",
+            "color_blue": "蓝色",
+            "color_label": "颜色: {}",
+            "prepare_catch": "准备抓取 {}...",
+            "tracking": "追踪 {}: 距 {:.1f}cm, 偏 {:.2f}°",
+            "searching": "搜索 {} 小球中...",
+        },
+        "en": {
+            "title": "Ball Catch",
+            "starting": "Starting...",
+            "ready": "Ready",
+            "info_idle": "Press D(R) to catch | C(Down) to change color",
+            "info_catching": "Catching... Press D(R) to stop | C(Down) to change color",
+            "corner_exit": "A: Exit",
+            "corner_b": "B: —",
+            "corner_color": "C: Color",
+            "corner_catch": "D: Catch",
+            "corner_stop": "D: Stop",
+            "btn_red": "🔴 Red",
+            "btn_green": "🟢 Green",
+            "btn_blue": "🔵 Blue",
+            "color_red": "Red",
+            "color_green": "Green",
+            "color_blue": "Blue",
+            "color_label": "Color: {}",
+            "prepare_catch": "Preparing to catch {}...",
+            "tracking": "Tracking {}: dist {:.1f}cm, yaw {:.2f}°",
+            "searching": "Searching for {} ball...",
+        },
+    })
+    def _color_name(c):
+        return _T(f"color_{c}")
+except Exception:
+    _T = lambda k, *a: k
+    def _color_name(c):
+        return COLOR_LABELS_CN.get(c, c)
+
 # ===================== XGO 库 =====================
 sys.path.insert(0, "/home/pi/lib")
 
@@ -77,6 +135,7 @@ def _init_dog():
 # ===================== 颜色定义 =====================
 COLORS = ["red", "green", "blue"]
 COLOR_LABELS_CN = {"red": "红色", "green": "绿色", "blue": "蓝色"}
+
 
 # HSV 范围（参考 Blockly 配置 + ball.py）
 HSV_RANGES = {
@@ -248,7 +307,7 @@ class BallTrackPage(QWidget):
         self._detector = BallDetector()
 
         # ---- 标题 ----
-        self.title = QLabel("小球抓取")
+        self.title = QLabel(_T("title"))
         f1 = QFont()
         f1.setPointSize(18)
         f1.setBold(True)
@@ -263,16 +322,16 @@ class BallTrackPage(QWidget):
             "background-color: black; border: 2px solid #333;"
         )
         self.camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.camera_label.setText("启动中...")
+        self.camera_label.setText(_T("starting"))
 
         # ---- 状态信息 ----
-        self.status_label = QLabel("就绪")
+        self.status_label = QLabel(_T("ready"))
         self.status_label.setStyleSheet(
             "color: #18df6b; font-size: 14px; padding: 4px;"
         )
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.info_label = QLabel("按 D(右) 开始抓取 | C(下) 切换颜色")
+        self.info_label = QLabel(_T("info_idle"))
         self.info_label.setStyleSheet("color: #8892c9; font-size: 11px;")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info_label.setWordWrap(True)
@@ -288,9 +347,9 @@ class BallTrackPage(QWidget):
             "border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: bold; }"
         )
 
-        self.btn_red = QPushButton("🔴 红色")
-        self.btn_green = QPushButton("🟢 绿色")
-        self.btn_blue = QPushButton("🔵 蓝色")
+        self.btn_red = QPushButton(_T("btn_red"))
+        self.btn_green = QPushButton(_T("btn_green"))
+        self.btn_blue = QPushButton(_T("btn_blue"))
         self._color_btns = [self.btn_red, self.btn_green, self.btn_blue]
 
         for i, btn in enumerate(self._color_btns):
@@ -306,14 +365,14 @@ class BallTrackPage(QWidget):
 
         # ---- 四角按键提示 ----
         corner_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_tl = QLabel("A: 退出", self)
+        self.corner_tl = QLabel(_T("corner_exit"), self)
         self.corner_tl.setStyleSheet(corner_style)
-        self.corner_tr = QLabel("B: —", self)
+        self.corner_tr = QLabel(_T("corner_b"), self)
         self.corner_tr.setStyleSheet(corner_style)
         self.corner_tr.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.corner_bl = QLabel("C: 换色", self)
+        self.corner_bl = QLabel(_T("corner_color"), self)
         self.corner_bl.setStyleSheet(corner_style)
-        self.corner_br = QLabel("D: 抓取", self)
+        self.corner_br = QLabel(_T("corner_catch"), self)
         self.corner_br.setStyleSheet(corner_style)
         self.corner_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 
@@ -384,7 +443,7 @@ class BallTrackPage(QWidget):
             self._color_idx = (self._color_idx + 2) % 3
             self._color = COLORS[self._color_idx]
             self._update_btn_styles()
-            self.status_label.setText(f"颜色: {COLOR_LABELS_CN[self._color]}")
+            self.status_label.setText(_T("color_label", _color_name(self._color)))
             self.status_label.setStyleSheet("color: #18df6b; font-size: 14px; padding: 4px;")
             print(f"[ball_track] color -> {self._color}", flush=True)
         elif ev.key() == Qt.Key.Key_Down:
@@ -392,7 +451,7 @@ class BallTrackPage(QWidget):
             self._color_idx = (self._color_idx + 1) % 3
             self._color = COLORS[self._color_idx]
             self._update_btn_styles()
-            self.status_label.setText(f"颜色: {COLOR_LABELS_CN[self._color]}")
+            self.status_label.setText(_T("color_label", _color_name(self._color)))
             self.status_label.setStyleSheet("color: #18df6b; font-size: 14px; padding: 4px;")
             print(f"[ball_track] color -> {self._color}", flush=True)
 
@@ -407,7 +466,7 @@ class BallTrackPage(QWidget):
         self._color_idx = idx
         self._color = COLORS[idx]
         self._update_btn_styles()
-        self.status_label.setText(f"颜色: {COLOR_LABELS_CN[self._color]}")
+        self.status_label.setText(_T("color_label", _color_name(self._color)))
         self.status_label.setStyleSheet("color: #18df6b; font-size: 14px; padding: 4px;")
         print(f"[ball_track] color -> {self._color}", flush=True)
 
@@ -480,15 +539,14 @@ class BallTrackPage(QWidget):
                 dist = info.get("distance", 0)
                 yaw = info.get("yaw_err", 0)
                 self.status_label.setText(
-                    f"追踪 {COLOR_LABELS_CN[self._color]}: "
-                    f"距 {dist:.1f}cm, 偏 {yaw:.2f}°"
+                    _T("tracking", _color_name(self._color), dist, yaw)
                 )
                 self.status_label.setStyleSheet(
                     "color: #18df6b; font-size: 12px; padding: 4px;"
                 )
             else:
                 self.status_label.setText(
-                    f"搜索 {COLOR_LABELS_CN[self._color]} 小球中..."
+                    _T("searching", _color_name(self._color))
                 )
                 self.status_label.setStyleSheet(
                     "color: #FFD93D; font-size: 12px; padding: 4px;"
@@ -514,10 +572,10 @@ class BallTrackPage(QWidget):
         self._close_mode = False
         self._un_circle = 0
         self._detector.reset()
-        self.corner_br.setText("D: 停止")
-        self.info_label.setText("正在抓取中... 按 D(右) 停止 | C(下) 换色")
+        self.corner_br.setText(_T("corner_stop"))
+        self.info_label.setText(_T("info_catching"))
         self.info_label.setStyleSheet("color: #FFD93D; font-size: 11px;")
-        self.status_label.setText(f"准备抓取 {COLOR_LABELS_CN[self._color]}...")
+        self.status_label.setText(_T("prepare_catch", _color_name(self._color)))
         self.status_label.setStyleSheet("color: #18df6b; font-size: 12px; padding: 4px;")
 
         self._catch_thread = threading.Thread(target=self._catch_loop, daemon=True)
@@ -539,10 +597,10 @@ class BallTrackPage(QWidget):
                 dog.attitude('y', 0)
         except Exception:
             pass
-        self.corner_br.setText("D: 抓取")
-        self.info_label.setText("按 D(右) 开始抓取 | C(下) 切换颜色")
+        self.corner_br.setText(_T("corner_catch"))
+        self.info_label.setText(_T("info_idle"))
         self.info_label.setStyleSheet("color: #8892c9; font-size: 11px;")
-        self.status_label.setText("就绪")
+        self.status_label.setText(_T("ready"))
         self.status_label.setStyleSheet("color: #18df6b; font-size: 14px; padding: 4px;")
 
     def _catch_loop(self):

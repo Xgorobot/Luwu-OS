@@ -40,6 +40,50 @@ from xgolib import XGO
 
 mark("xgolib import done")
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "🎮 手柄控制",
+            "joystick": "手柄",
+            "dog": "机器狗",
+            "joystick_connected": "手柄 已连接",
+            "joystick_disconnected": "手柄 未连接",
+            "dog_ready": "机器狗 就绪",
+            "dog_offline": "机器狗 离线",
+            "step": "步幅",
+            "pace": "步频",
+            "height": "高度",
+            "pace_slow": "慢",
+            "pace_med": "中",
+            "pace_fast": "快",
+            "hint_exit": "C: 退出",
+            "hint_action": "START: 复位   SELECT: 跨障",
+        },
+        "en": {
+            "title": "🎮 Gamepad",
+            "joystick": "Pad",
+            "dog": "Dog",
+            "joystick_connected": "Pad: Connected",
+            "joystick_disconnected": "Pad: Disconnected",
+            "dog_ready": "Dog: Ready",
+            "dog_offline": "Dog: Offline",
+            "step": "Step",
+            "pace": "Pace",
+            "height": "Height",
+            "pace_slow": "Slow",
+            "pace_med": "Med",
+            "pace_fast": "Fast",
+            "hint_exit": "C: Exit",
+            "hint_action": "START: Reset   SELECT: Climb",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
+
 # ===================== 常量 =====================
 AUTO_EXIT_SEC = 600  # 10 分钟无操作自动退出
 
@@ -475,16 +519,16 @@ class JoystickPage(QWidget):
         # ---- 顶部状态栏 ----
         self.js_dot = QLabel("●")
         self.js_dot.setStyleSheet(f"color: {COLOR_DANGER}; font-size: 14px;")
-        self.js_text = QLabel("手柄")
+        self.js_text = QLabel(_T("joystick"))
         self.js_text.setStyleSheet(f"color: {COLOR_TEXT_DIM}; font-size: 11px;")
 
-        self.title = QLabel("🎮 手柄控制")
+        self.title = QLabel(_T("title"))
         tf = QFont(); tf.setPointSize(13); tf.setBold(True)
         self.title.setFont(tf)
         self.title.setStyleSheet(f"color: {COLOR_TEXT};")
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.dog_text = QLabel("机器狗")
+        self.dog_text = QLabel(_T("dog"))
         self.dog_text.setStyleSheet(f"color: {COLOR_TEXT_DIM}; font-size: 11px;")
         self.dog_dot = QLabel("●")
         self.dog_dot.setStyleSheet(f"color: {COLOR_DANGER}; font-size: 14px;")
@@ -555,12 +599,12 @@ class JoystickPage(QWidget):
 
         # 参数卡片
         self.lbl_step = QLabel("70")
-        self.lbl_pace = QLabel("中")
+        self.lbl_pace = QLabel(_T("pace_med"))
         self.lbl_height = QLabel("105")
         params_row = QHBoxLayout()
         params_row.setSpacing(3)
         params_row.setContentsMargins(0, 0, 0, 0)
-        for tag, val in (("步幅", self.lbl_step), ("步频", self.lbl_pace), ("高度", self.lbl_height)):
+        for tag, val in ((_T("step"), self.lbl_step), (_T("pace"), self.lbl_pace), (_T("height"), self.lbl_height)):
             cell = QFrame()
             cell.setStyleSheet(
                 f"QFrame {{ background-color: {COLOR_PANEL_BORDER}; border-radius: 4px; }}"
@@ -592,9 +636,9 @@ class JoystickPage(QWidget):
 
         # ---- 底部提示 ----
         hint_style = f"color: {COLOR_TEXT_FAINT}; font-size: 10px; background: transparent;"
-        self.hint_bl = QLabel("C: 退出")
+        self.hint_bl = QLabel(_T("hint_exit"))
         self.hint_bl.setStyleSheet(hint_style)
-        self.hint_br = QLabel("START: 复位   SELECT: 跨障")
+        self.hint_br = QLabel(_T("hint_action"))
         self.hint_br.setStyleSheet(hint_style)
         self.hint_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 
@@ -653,17 +697,17 @@ class JoystickPage(QWidget):
         # 状态点
         if self._js.connected:
             self.js_dot.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 14px;")
-            self.js_text.setText("手柄 已连接")
+            self.js_text.setText(_T("joystick_connected"))
         else:
             self.js_dot.setStyleSheet(f"color: {COLOR_DANGER}; font-size: 14px;")
-            self.js_text.setText("手柄 未连接")
+            self.js_text.setText(_T("joystick_disconnected"))
 
         if self._controller.dog_available:
             self.dog_dot.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 14px;")
-            self.dog_text.setText("机器狗 就绪")
+            self.dog_text.setText(_T("dog_ready"))
         else:
             self.dog_dot.setStyleSheet(f"color: {COLOR_DANGER}; font-size: 14px;")
-            self.dog_text.setText("机器狗 离线")
+            self.dog_text.setText(_T("dog_offline"))
 
         # 摇杆位置
         ax = self._js.axis_states
@@ -690,9 +734,9 @@ class JoystickPage(QWidget):
             lbl.setStyleSheet(self._btn_style(pressed, color))
 
         # 参数卡片
-        pace_names = {1: "慢", 2: "中", 3: "快"}
+        pace_names = {1: _T("pace_slow"), 2: _T("pace_med"), 3: _T("pace_fast")}
         self.lbl_step.setText(str(self._controller.step_control))
-        self.lbl_pace.setText(pace_names.get(self._controller.pace_freq, "中"))
+        self.lbl_pace.setText(pace_names.get(self._controller.pace_freq, _T("pace_med")))
         self.lbl_height.setText(str(self._controller.height))
 
     # ---- 首帧日志 ----

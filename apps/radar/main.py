@@ -22,8 +22,8 @@ def mark(name: str):
 
 mark("python entry")
 
-# ---- 添加 ydlidar SDK 路径 ----
-sys.path.insert(0, '/home/pi/XGO-PI-CM5/robots/Dog_LM/demos/YDLidar-SDK/build/python')
+# ---- 添加 ydlidar SDK 路径（已迁移至 luwu-os/libs/ydlidar_sdk，解耦 XGO-PI-CM5）----
+sys.path.insert(0, '/home/pi/luwu-os/libs/ydlidar_sdk')
 import ydlidar
 
 # ---- PySide6 导入 ----
@@ -32,6 +32,30 @@ from PySide6.QtGui import QFont, QKeyEvent, QPainter, QColor, QPen, QBrush, QPix
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
 
 mark("imports done")
+
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "雷达扫描",
+            "init": "正在初始化雷达...",
+            "corner_exit": "C:退出",
+            "radar_disconnected": "雷达未连接",
+            "radar_connected": "雷达已连接",
+        },
+        "en": {
+            "title": "Lidar Scan",
+            "init": "Initializing lidar...",
+            "corner_exit": "C: Exit",
+            "radar_disconnected": "Lidar not connected",
+            "radar_connected": "Lidar connected",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
 
 # ===================== 常量 =====================
 AUTO_EXIT_SEC = 120
@@ -57,14 +81,14 @@ class RadarReaderThread(QThread):
         self._init_radar()
 
         if not self.radar_connected:
-            self.radar_status.emit(False, "雷达未连接")
+            self.radar_status.emit(False, _T("radar_disconnected"))
             # 仍然循环，尝试重连
             while self._running:
                 time.sleep(2)
                 self._init_radar()
             return
 
-        self.radar_status.emit(True, "雷达已连接")
+        self.radar_status.emit(True, _T("radar_connected"))
         print("[radar] reader thread started")
 
         # 主读取循环
@@ -295,7 +319,7 @@ class RadarPage(QWidget):
         self._first_paint_logged = False
 
         # ---- 标题 ----
-        self.title = QLabel("雷达扫描")
+        self.title = QLabel(_T("title"))
         f1 = QFont()
         f1.setPointSize(18)
         f1.setBold(True)
@@ -307,19 +331,19 @@ class RadarPage(QWidget):
         self.radar_canvas = RadarCanvas(self)
 
         # ---- 状态行 ----
-        self.status_label = QLabel("正在初始化雷达...")
+        self.status_label = QLabel(_T("init"))
         self.status_label.setStyleSheet("color: #8892c9; font-size: 12px;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(True)
 
         # ---- 提示 ----
-        self.hint = QLabel("C:退出")
+        self.hint = QLabel(_T("corner_exit"))
         self.hint.setStyleSheet("color: #5c6a9c; font-size: 11px;")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 四角按键说明 ----
         corner_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_bl = QLabel("C:退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(corner_style)
 
         # ---- 布局 ----

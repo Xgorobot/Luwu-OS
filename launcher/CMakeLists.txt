@@ -14,5 +14,7 @@ qt_add_executable(luwu_launcher
     keyfilter.h
     statusbar.cpp
     statusbar.h
+    i18n.cpp
+    i18n.h
 )
 target_link_libraries(luwu_launcher PRIVATE Qt6::Widgets)

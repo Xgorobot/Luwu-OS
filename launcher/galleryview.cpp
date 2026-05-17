@@ -1,4 +1,5 @@
 #include "galleryview.h"
+#include "i18n.h"
 #include <QPainter>
 #include <QResizeEvent>
 #include <QKeyEvent>
@@ -9,11 +10,11 @@
 static constexpr const char *ASSET_DIR = "/home/pi/luwu-os/launcher/assets/";
 
 const CardData CARDS[CARD_COUNT] = {
-    {"WiFi",       "card_network.png",  "apps/network/main.py"},
-    {"Coding",     "card_coding.png",   "apps/coding/main.py"},
-    {"AI Chat",    "card_ai.png",       "apps/ai/main.py"},
-    {"Demo",       "card_more.png",     "apps/demo_page/main.py"},
-    {"Settings",   "card_settings.png", "apps/settings/main.py"},
+    {"网络",     "WiFi",     "card_network.png",  "apps/network/main.py"},
+    {"编程",     "Coding",   "card_coding.png",   "apps/coding/main.py"},
+    {"AI 对话",  "AI Chat",  "card_ai.png",       "apps/ai/main.py"},
+    {"示例",     "Demo",     "card_more.png",     "apps/demo_page/main.py"},
+    {"设置",     "Settings", "card_settings.png", "apps/settings/main.py"},
 };
 
 // ========================================================================
@@ -82,7 +83,8 @@ GalleryView::GalleryView(QWidget *parent)
         img->setAttribute(Qt::WA_TransparentForMouseEvents);
         cardImages.append(img);
 
-        auto *lbl = new QLabel(CARDS[i].title, this);
+        auto *lbl = new QLabel(luwu::tr(QString::fromUtf8(CARDS[i].title),
+                                        QString::fromUtf8(CARDS[i].titleEn)), this);
         lbl->setAlignment(Qt::AlignCenter);
         lbl->setAttribute(Qt::WA_TransparentForMouseEvents);
         cardLabels.append(lbl);
@@ -190,6 +192,15 @@ void GalleryView::moveSelection(int delta) {
 }
 
 bool GalleryView::isAnimating() const { return animating; }
+
+void GalleryView::retranslate() {
+    for (int i = 0; i < CARD_COUNT && i < cardLabels.size(); ++i) {
+        if (cardLabels[i]) {
+            cardLabels[i]->setText(luwu::tr(QString::fromUtf8(CARDS[i].title),
+                                            QString::fromUtf8(CARDS[i].titleEn)));
+        }
+    }
+}
 
 void GalleryView::resizeEvent(QResizeEvent *) {
     bgLabel->setGeometry(0, 0, width(), height());

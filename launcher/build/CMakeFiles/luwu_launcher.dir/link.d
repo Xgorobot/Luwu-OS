@@ -7,6 +7,7 @@ luwu_launcher: \
   CMakeFiles/luwu_launcher.dir/galleryview.cpp.o \
   CMakeFiles/luwu_launcher.dir/demogridview.cpp.o \
   CMakeFiles/luwu_launcher.dir/statusbar.cpp.o \
+  CMakeFiles/luwu_launcher.dir/i18n.cpp.o \
   /usr/lib/aarch64-linux-gnu/libQt6Widgets.so.6.8.2 \
   /usr/lib/aarch64-linux-gnu/libQt6Gui.so.6.8.2 \
   /usr/lib/aarch64-linux-gnu/libGLX.so \
@@ -90,6 +91,8 @@ CMakeFiles/luwu_launcher.dir/galleryview.cpp.o:
 CMakeFiles/luwu_launcher.dir/demogridview.cpp.o:
 
 CMakeFiles/luwu_launcher.dir/statusbar.cpp.o:
+
+CMakeFiles/luwu_launcher.dir/i18n.cpp.o:
 
 /usr/lib/aarch64-linux-gnu/libQt6Widgets.so.6.8.2:
 

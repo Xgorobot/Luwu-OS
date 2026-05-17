@@ -51,6 +51,28 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HTTP_PORT = 8080
 AUTO_EXIT_SEC = 300  # 5 分钟无操作自动退出
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "图传模式",
+            "connected": "已连接 ({} 客户端)",
+            "waiting": "等待连接...",
+            "corner_exit": "C: 退出",
+        },
+        "en": {
+            "title": "RC Mode",
+            "connected": "Connected ({} clients)",
+            "waiting": "Waiting for connection...",
+            "corner_exit": "C: Exit",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
+
 
 # ===================== 网络工具 =====================
 def get_ip(ifname: str = "wlan0") -> str:
@@ -191,8 +213,8 @@ _conn_lock = threading.Lock()
 def get_connection_status() -> str:
     with _conn_lock:
         if _connected_clients > 0:
-            return f"已连接 ({_connected_clients} 客户端)"
-        return "等待连接..."
+            return _T("connected", _connected_clients)
+        return _T("waiting")
 
 
 # ---- WebSocket 事件 ----
@@ -313,7 +335,7 @@ class RCModePage(QWidget):
         self._first_paint_logged = False
 
         # ---- 标题 ----
-        self.title = QLabel("图传模式")
+        self.title = QLabel(_T("title"))
         f1 = QFont()
         f1.setPointSize(18)
         f1.setBold(True)
@@ -330,13 +352,13 @@ class RCModePage(QWidget):
         self.ip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 状态 ----
-        self.status_label = QLabel("等待连接...")
+        self.status_label = QLabel(_T("waiting"))
         self.status_label.setStyleSheet("color: #8892c9; font-size: 12px;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # ---- 四角按键提示 ----
         corner_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_bl = QLabel("C: 退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(corner_style)
 
         # ---- 布局 ----

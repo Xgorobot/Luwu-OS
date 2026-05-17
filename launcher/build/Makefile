@@ -203,6 +203,30 @@ galleryview.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/luwu_launcher.dir/build.make CMakeFiles/luwu_launcher.dir/galleryview.cpp.s
 .PHONY : galleryview.cpp.s
 
+i18n.o: i18n.cpp.o
+.PHONY : i18n.o
+
+# target to build an object file
+i18n.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/luwu_launcher.dir/build.make CMakeFiles/luwu_launcher.dir/i18n.cpp.o
+.PHONY : i18n.cpp.o
+
+i18n.i: i18n.cpp.i
+.PHONY : i18n.i
+
+# target to preprocess a source file
+i18n.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/luwu_launcher.dir/build.make CMakeFiles/luwu_launcher.dir/i18n.cpp.i
+.PHONY : i18n.cpp.i
+
+i18n.s: i18n.cpp.s
+.PHONY : i18n.s
+
+# target to generate assembly for a file
+i18n.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/luwu_launcher.dir/build.make CMakeFiles/luwu_launcher.dir/i18n.cpp.s
+.PHONY : i18n.cpp.s
+
 luwu_launcher_autogen/mocs_compilation.o: luwu_launcher_autogen/mocs_compilation.cpp.o
 .PHONY : luwu_launcher_autogen/mocs_compilation.o
 
@@ -292,6 +316,9 @@ help:
 	@echo "... galleryview.o"
 	@echo "... galleryview.i"
 	@echo "... galleryview.s"
+	@echo "... i18n.o"
+	@echo "... i18n.i"
+	@echo "... i18n.s"
 	@echo "... luwu_launcher_autogen/mocs_compilation.o"
 	@echo "... luwu_launcher_autogen/mocs_compilation.i"
 	@echo "... luwu_launcher_autogen/mocs_compilation.s"

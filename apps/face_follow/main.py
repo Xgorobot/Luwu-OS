@@ -37,6 +37,30 @@ from PySide6.QtWidgets import QApplication, QWidget, QLabel
 FACE_MODEL_PATH = "/home/pi/luwu-os/model/face_detection_yunet_2023mar.onnx"
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "title": "人脸跟随",
+            "corner_mirror": "A:镜像",
+            "corner_control": "B:控制",
+            "corner_exit": "C:退出",
+            "corner_calib": "D:标定",
+        },
+        "en": {
+            "title": "Face Follow",
+            "corner_mirror": "A:Mirror",
+            "corner_control": "B:Control",
+            "corner_exit": "C:Exit",
+            "corner_calib": "D:Calibrate",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
+
 # ---- Robot control ----
 _xgo_dog = None
 _robot_available = False
@@ -161,7 +185,7 @@ class FaceFollowWidget(QWidget):
         self.camera_label.setStyleSheet("background-color: black;")
 
         # ---- Status label ----
-        self.status_label = QLabel("人脸跟随", self)
+        self.status_label = QLabel(_T("title"), self)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet(
             "color: #18df6b; font-size: 16px; font-weight: bold; "
@@ -181,14 +205,14 @@ class FaceFollowWidget(QWidget):
             "color: #ffffff; font-size: 13px; font-weight: bold; "
             "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
         )
-        self.corner_tl = QLabel("A:镜像", self)
+        self.corner_tl = QLabel(_T("corner_mirror"), self)
         self.corner_tl.setStyleSheet(corner_style)
-        self.corner_tr = QLabel("B:控制", self)
+        self.corner_tr = QLabel(_T("corner_control"), self)
         self.corner_tr.setStyleSheet(corner_style)
         self.corner_tr.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.corner_bl = QLabel("C:退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(corner_style)
-        self.corner_br = QLabel("D:标定", self)
+        self.corner_br = QLabel(_T("corner_calib"), self)
         self.corner_br.setStyleSheet(corner_style)
         self.corner_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 

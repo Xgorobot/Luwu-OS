@@ -36,17 +36,33 @@ from PySide6.QtWidgets import QApplication, QWidget, QLabel
 # ========================================================================
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PICS_DIR = os.path.join(APP_DIR, "pics")
-LANGUAGE_INI = "/home/pi/XGO-PI-CM5/common/language/language.ini"
-FONT_PATH = "/home/pi/XGO-PI-CM5/common/model/msyh.ttc"
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
 BLOCKLY_PORT = 8000
+
+# 接入 luwu-os 全局 i18n（去除 XGO-PI-CM5 依赖）
+LUWU_ROOT = "/home/pi/luwu-os"
+if LUWU_ROOT not in sys.path:
+    sys.path.insert(0, LUWU_ROOT)
+try:
+    from libs.i18n import get_lang as _i18n_get_lang, FONT_PATH as _I18N_FONT_PATH
+except Exception:
+    _i18n_get_lang = None
+    _I18N_FONT_PATH = ""
+
+LANGUAGE_INI = "/home/pi/luwu-os/configs/language.ini"
+FONT_PATH = _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
 
 # xgo_blockly 相关路径（使用系统 Python，xgo_blockly 已安装）
 BLOCKLY_PYTHON = sys.executable  # 系统 python3
 BLOCKLY_SERVICES_DIR = os.path.expanduser(
     "~/.local/lib/python3.13/site-packages/xgo_blockly/services"
 )
-BLOCKLY_PROJECTS_DIR = "/home/pi/XGO-PI-CM5/xgoBlocklyProjects"
+# Blockly 用户项目目录（用户态目录，自动创建；不再依赖 XGO-PI-CM5）
+BLOCKLY_PROJECTS_DIR = os.path.expanduser("~/xgoBlocklyProjects")
+try:
+    os.makedirs(BLOCKLY_PROJECTS_DIR, exist_ok=True)
+except Exception:
+    pass
 
 # ========================================================================
 # 页面状态
@@ -59,6 +75,11 @@ PAGE_FILE_LIST = 1
 # 语言支持
 # ========================================================================
 def _detect_language():
+    if _i18n_get_lang:
+        try:
+            return _i18n_get_lang()
+        except Exception:
+            pass
     try:
         with open(LANGUAGE_INI, "r") as f:
             lang = f.read().strip()

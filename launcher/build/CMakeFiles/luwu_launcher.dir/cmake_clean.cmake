@@ -7,6 +7,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/luwu_launcher.dir/demogridview.cpp.o.d"
   "CMakeFiles/luwu_launcher.dir/galleryview.cpp.o"
   "CMakeFiles/luwu_launcher.dir/galleryview.cpp.o.d"
+  "CMakeFiles/luwu_launcher.dir/i18n.cpp.o"
+  "CMakeFiles/luwu_launcher.dir/i18n.cpp.o.d"
   "CMakeFiles/luwu_launcher.dir/luwu_launcher_autogen/mocs_compilation.cpp.o"
   "CMakeFiles/luwu_launcher.dir/luwu_launcher_autogen/mocs_compilation.cpp.o.d"
   "CMakeFiles/luwu_launcher.dir/main.cpp.o"

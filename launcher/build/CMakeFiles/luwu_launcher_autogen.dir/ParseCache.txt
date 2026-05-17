@@ -1306,3 +1306,5 @@
  mdp:/usr/lib/linux/uapi/arm64/asm/errno.h
  mdp:/usr/lib/linux/uapi/arm64/asm/posix_types.h
  mdp:/usr/lib/linux/uapi/arm64/asm/types.h
+/home/pi/luwu-os/launcher/i18n.h
+/home/pi/luwu-os/launcher/i18n.cpp

@@ -39,6 +39,54 @@ from xgolib import XGO
 
 mark("imports done")
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "camera_starting": "摄像头启动中...",
+            "corner_color": "A:颜色",
+            "corner_debug": "B:调试",
+            "corner_exit": "C:退出",
+            "corner_catch": "D:抓取",
+            "hint_idle": "A:切换颜色 | B:调试 | C:退出 | D:抓取",
+            "hint_catch": "D:停止抓取",
+            "hint_debug": "A:颜色 | B:距离+ | C:退出 | D:保存",
+            "catching_dist": "🔍 抓取 {} | 距离:{:.1f}cm",
+            "catching_search": "🔍 抓取 {} | 搜索中...",
+            "debug_status": "调试模式 | 颜色:{} | 抓取距离:{:.1f} | 中心:{:.0f} | 最小半径:{:.0f}",
+            "idle_status": "就绪 | 目标: {} | 距离阈值: {:.1f}",
+            "color_red": "红色",
+            "color_green": "绿色",
+            "color_blue": "蓝色",
+        },
+        "en": {
+            "camera_starting": "Camera starting...",
+            "corner_color": "A:Color",
+            "corner_debug": "B:Debug",
+            "corner_exit": "C:Exit",
+            "corner_catch": "D:Catch",
+            "hint_idle": "A:Color | B:Debug | C:Exit | D:Catch",
+            "hint_catch": "D:Stop",
+            "hint_debug": "A:Color | B:Dist+ | C:Exit | D:Save",
+            "catching_dist": "🔍 Catching {} | dist:{:.1f}cm",
+            "catching_search": "🔍 Catching {} | searching...",
+            "debug_status": "Debug | Color:{} | CatchDist:{:.1f} | Center:{:.0f} | MinR:{:.0f}",
+            "idle_status": "Ready | Target: {} | Dist threshold: {:.1f}",
+            "color_red": "Red",
+            "color_green": "Green",
+            "color_blue": "Blue",
+        },
+    })
+    def _color_name(c):
+        return _T(f"color_{c}")
+except Exception:
+    _T = lambda k, *a: k
+    def _color_name(c):
+        return COLOR_NAMES.get(c, c)
+
 # ===================== 常量 =====================
 AUTO_EXIT_SEC = 120
 CAM_W, CAM_H = 320, 240
@@ -422,7 +470,7 @@ class BallCatchPage(QWidget):
         self.min_radius = load_var(float(MIN_RADIUS_DEFAULT), "min_radius.txt")
 
         # ---- 摄像头画面（全屏填充） ----
-        self.camera_label = QLabel("摄像头启动中...", self)
+        self.camera_label = QLabel(_T("camera_starting"), self)
         self.camera_label.setStyleSheet(
             "background-color: black; color: #666; border: none;"
         )
@@ -439,19 +487,19 @@ class BallCatchPage(QWidget):
 
         # ---- 四角按键说明（叠加在视频上） ----
         corner_style = "color: #aaccee; font-size: 11px; background: rgba(0,0,0,100); border: none; padding: 2px 6px;"
-        self.corner_tl = QLabel("A:颜色", self)
+        self.corner_tl = QLabel(_T("corner_color"), self)
         self.corner_tl.setStyleSheet(corner_style)
-        self.corner_tr = QLabel("B:调试", self)
+        self.corner_tr = QLabel(_T("corner_debug"), self)
         self.corner_tr.setStyleSheet(corner_style)
         self.corner_tr.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.corner_bl = QLabel("C:退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(corner_style)
-        self.corner_br = QLabel("D:抓取", self)
+        self.corner_br = QLabel(_T("corner_catch"), self)
         self.corner_br.setStyleSheet(corner_style)
         self.corner_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         # ---- 提示（顶部叠加） ----
-        self.hint = QLabel("A:切换颜色 | B:调试 | C:退出 | D:抓取", self)
+        self.hint = QLabel(_T("hint_idle"), self)
         self.hint.setStyleSheet(
             "color: #8899bb; font-size: 11px; background: rgba(0,0,0,100); border: none; padding: 2px 8px;"
         )
@@ -579,7 +627,7 @@ class BallCatchPage(QWidget):
             if self._worker:
                 self._worker._running = False
                 self._worker.stop_robot()
-            self.hint.setText("A:切换颜色 | B:调试 | C:退出 | D:抓取")
+            self.hint.setText(_T("hint_idle"))
             self._update_status()
             print("[ball_catch] catch mode exit")
             return
@@ -587,7 +635,7 @@ class BallCatchPage(QWidget):
         # 开始抓取
         self.mode = "catching"
         self._auto_exit_timer.start(AUTO_EXIT_SEC * 1000)
-        self.hint.setText("D:停止抓取")
+        self.hint.setText(_T("hint_catch"))
         self._update_status()
 
         # 停止空闲摄像头
@@ -633,11 +681,11 @@ class BallCatchPage(QWidget):
         """后台线程发来的球检测状态"""
         if self.mode != "catching":
             return
-        color_name = COLOR_NAMES[COLORS[self.color_idx]]
+        color_name = _color_name(COLORS[self.color_idx])
         if found:
-            self.status_label.setText(f"🔍 抓取 {color_name} | 距离:{distance:.1f}cm")
+            self.status_label.setText(_T("catching_dist", color_name, distance))
         else:
-            self.status_label.setText(f"🔍 抓取 {color_name} | 搜索中...")
+            self.status_label.setText(_T("catching_search", color_name))
 
     def _on_catching_finished(self):
         """抓取完成后的处理"""
@@ -646,7 +694,7 @@ class BallCatchPage(QWidget):
         if self._worker:
             self._worker.wait(5000)
         self.mode = "idle"
-        self.hint.setText("A:切换颜色 | B:调试 | C:退出 | D:抓取")
+        self.hint.setText(_T("hint_idle"))
         self._update_status()
 
         # 重新打开空闲摄像头
@@ -665,10 +713,10 @@ class BallCatchPage(QWidget):
     def _toggle_debug(self):
         if self.mode == "debug":
             self.mode = "idle"
-            self.hint.setText("A:切换颜色 | B:调试 | C:退出 | D:抓取")
+            self.hint.setText(_T("hint_idle"))
         else:
             self.mode = "debug"
-            self.hint.setText("A:颜色 | B:距离+ | C:退出 | D:保存")
+            self.hint.setText(_T("hint_debug"))
         self._update_status()
 
     def _save_debug(self):
@@ -679,15 +727,15 @@ class BallCatchPage(QWidget):
         print(f"[ball_catch] saved: x_dist={self.x_distance}, x_center={self.x_center}, min_r={self.min_radius}")
 
     def _update_status(self):
-        color_name = COLOR_NAMES[COLORS[self.color_idx]]
+        color_name = _color_name(COLORS[self.color_idx])
         if self.mode == "debug":
             self.status_label.setText(
-                f"调试模式 | 颜色:{color_name} | 抓取距离:{self.x_distance:.1f} | 中心:{self.x_center:.0f} | 最小半径:{self.min_radius:.0f}"
+                _T("debug_status", color_name, self.x_distance, self.x_center, self.min_radius)
             )
         elif self.mode == "catching":
-            self.status_label.setText(f"🔍 抓取 {color_name} | 搜索中...")
+            self.status_label.setText(_T("catching_search", color_name))
         else:
-            self.status_label.setText(f"就绪 | 目标: {color_name} | 距离阈值: {self.x_distance:.1f}")
+            self.status_label.setText(_T("idle_status", color_name, self.x_distance))
 
     def closeEvent(self, ev):
         print("[ball_catch] closing", flush=True)

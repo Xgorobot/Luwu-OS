@@ -2,6 +2,7 @@
 #include <QStackedWidget>
 #include <QLabel>
 #include <QTimer>
+#include <QFileSystemWatcher>
 #include <fcntl.h>
 #include <unistd.h>
 #include <QDateTime>
@@ -228,6 +229,23 @@ int main(int argc, char *argv[]) {
 
     stack.showFullScreen();
     gallery->setFocus();
+
+    // --- 语言配置文件监听：切换后自动刷新桌面/Demo 文字 ---
+    auto *langWatcher = new QFileSystemWatcher(&stack);
+    const QString langIniPath = QStringLiteral("/home/pi/luwu-os/configs/language.ini");
+    if (QFile::exists(langIniPath)) {
+        langWatcher->addPath(langIniPath);
+    }
+    QObject::connect(langWatcher, &QFileSystemWatcher::fileChanged,
+                     [langWatcher, gallery, demoGrid, langIniPath]() {
+        qDebug() << "[luwu-launcher] language.ini changed, retranslating...";
+        // 部分编辑器会原子替换文件，导致 path 从 watcher 移除，需重新添加
+        if (!langWatcher->files().contains(langIniPath) && QFile::exists(langIniPath)) {
+            langWatcher->addPath(langIniPath);
+        }
+        if (gallery) gallery->retranslate();
+        if (demoGrid) demoGrid->retranslate();
+    });
 
     // --- 顶部状态栏覆盖层（时间 + 电量）---
     auto *statusBar = new StatusBar(&stack);

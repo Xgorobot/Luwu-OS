@@ -42,8 +42,20 @@ from state_machine import StateMachine, State
 # ===== Constants =====
 SCREEN_W, SCREEN_H = 320, 240
 BG_COLOR = (15, 21, 46)
-DING_WAV = "/home/pi/XGO-PI-CM5/common/music/ding.wav"
+DING_WAV = "/home/pi/luwu-os/assets/music/ding.wav"  # 资源已迁移，解耦 XGO-PI-CM5
 AUTO_EXIT_SEC = 600  # 10 minutes auto exit
+
+# ===== i18n =====
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {"corner_exit": "C: 退出", "corner_start": "D: 开始"},
+        "en": {"corner_exit": "C: Exit",  "corner_start": "D: Start"},
+    })
+except Exception:
+    _T = lambda k, *a: k
 
 print("=" * 50)
 print("  AI Chat (PySide6) - Starting...")
@@ -110,9 +122,9 @@ class AIChatPage(QWidget):
 
         # ---- Corner hints ----
         corner_style = "color: #5c6a9c; font-size: 11px; background: transparent;"
-        self.corner_bl = QLabel("C: 退出", self)     # KEY_BACK
+        self.corner_bl = QLabel(_T("corner_exit"), self)     # KEY_BACK
         self.corner_bl.setStyleSheet(corner_style)
-        self.corner_br = QLabel("D: 开始", self)     # KEY_ENTER
+        self.corner_br = QLabel(_T("corner_start"), self)     # KEY_ENTER
         self.corner_br.setStyleSheet(corner_style)
         self.corner_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 

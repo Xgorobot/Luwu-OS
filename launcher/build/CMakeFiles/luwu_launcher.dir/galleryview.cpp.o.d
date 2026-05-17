@@ -404,6 +404,9 @@ CMakeFiles/luwu_launcher.dir/galleryview.cpp.o: \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qrect.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/QPixmap \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qpixmap.h \
+ /home/pi/luwu-os/launcher/i18n.h \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/QString \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/qstring.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/QPainter \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qpainter.h \
  /usr/include/aarch64-linux-gnu/qt6/QtGui/qtextoption.h \

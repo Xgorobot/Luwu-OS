@@ -28,32 +28,60 @@ from PySide6.QtWidgets import (
 # ---- Paths ----
 APP_DIR = Path(__file__).resolve().parent
 PICS_DIR = APP_DIR / "pics"
-LANGUAGE_INI = APP_DIR / "language.ini"
+# 全局唯一语言配置（统一接入 libs/i18n）
+LUWU_ROOT = Path("/home/pi/luwu-os")
+LANGUAGE_INI = LUWU_ROOT / "configs" / "language.ini"
 VOLUME_INI = APP_DIR / "volume.ini"
 CN_LA = APP_DIR / "cn.la"
 EN_LA = APP_DIR / "en.la"
 
+# 接入全局 i18n 库
+if str(LUWU_ROOT) not in sys.path:
+    sys.path.insert(0, str(LUWU_ROOT))
+try:
+    from libs.i18n import get_lang as _i18n_get_lang, set_lang as _i18n_set_lang
+except Exception:
+    _i18n_get_lang = None
+    _i18n_set_lang = None
+
 # ---- Language helpers ----
-def load_language():
-    """Load current language file based on language.ini"""
+def get_lang_code():
+    """读取全局语言代码：'cn' 或 'en'。"""
+    if _i18n_get_lang:
+        try:
+            return _i18n_get_lang()
+        except Exception:
+            pass
     try:
         with open(LANGUAGE_INI, "r") as f:
-            lang = f.read().strip()
+            return f.read().strip() or "cn"
     except Exception:
-        lang = "cn"
+        return "cn"
+
+def set_lang_code(code: str) -> bool:
+    """写入全局语言代码（重启后生效）。"""
+    if _i18n_set_lang:
+        try:
+            return _i18n_set_lang(code)
+        except Exception:
+            pass
+    try:
+        LANGUAGE_INI.parent.mkdir(parents=True, exist_ok=True)
+        with open(LANGUAGE_INI, "w") as f:
+            f.write(code)
+        return True
+    except Exception:
+        return False
+
+def load_language():
+    """按当前语言加载 settings 自带的翻译 JSON（cn.la / en.la）。"""
+    lang = get_lang_code()
     la_path = CN_LA if lang == "cn" else EN_LA
     try:
         with open(la_path, "r") as f:
             return json.load(f)
     except Exception:
         return {}
-
-def get_lang_code():
-    try:
-        with open(LANGUAGE_INI, "r") as f:
-            return f.read().strip()
-    except Exception:
-        return "cn"
 
 # ---- SN helpers ----
 def get_sn_short():
@@ -144,33 +172,27 @@ def get_disk_info():
     except Exception:
         return "Unknown"
 
-def get_xgolib_version():
+def _get_pkg_version(pkg_name: str) -> str:
+    """使用 importlib.metadata 直接读取已安装包的版本号（毫秒级，无子进程）。
+    避免在主线程调用 `pip show` 造成 1~2 秒阻塞，导致打开 settings 时屏幕黑一半。
+    """
     try:
-        import subprocess
-        result = subprocess.run(
-            ["pip", "show", "xgolib"],
-            capture_output=True, text=True, timeout=10
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith("Version:"):
-                return line.split(":")[1].strip()
-        return "未知"
+        try:
+            from importlib.metadata import version, PackageNotFoundError  # py3.8+
+        except Exception:
+            from importlib_metadata import version, PackageNotFoundError  # type: ignore
+        try:
+            return version(pkg_name)
+        except PackageNotFoundError:
+            return "未安装"
     except Exception:
-        return "未安装"
+        return "未知"
+
+def get_xgolib_version():
+    return _get_pkg_version("xgolib")
 
 def get_xgoedu_version():
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["pip", "show", "xgoedu-luwuos"],
-            capture_output=True, text=True, timeout=10
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith("Version:"):
-                return line.split(":")[1].strip()
-        return "未知"
-    except Exception:
-        return "未安装"
+    return _get_pkg_version("xgoedu-luwuos")
 
 # ---- Color constants ----
 COLOR_BG = QColor(15, 21, 48)
@@ -414,19 +436,11 @@ class AboutPage(QWidget):
         self.scroll_offset = 0
         self.visible_count = 1
 
-        # Gather info
-        self.info_items = self._gather_info()
-
-        # Info labels
+        # 懒加载：__init__ 时不采集信息，避免 settings 启动时被 AboutPage 拖慢。
+        # info_items / info_labels 在 on_enter() 首次进入页面时才生成。
+        self.info_items = []
         self.info_labels = []
-        for key, value in self.info_items:
-            lbl = QLabel(f"{key}:  {value}", self)
-            lbl_font = QFont()
-            lbl_font.setPointSize(9)
-            lbl.setFont(lbl_font)
-            lbl.setStyleSheet("color: #c0c8e0; background: transparent; padding: 0px 6px;")
-            lbl.setWordWrap(False)
-            self.info_labels.append(lbl)
+        self._info_loaded = False
 
         # Corner hints
         hint_style = "color: #8892c9; font-size: 12px; background: transparent;"
@@ -441,6 +455,14 @@ class AboutPage(QWidget):
         self.corner_br.setStyleSheet(hint_style)
         self.corner_br.setAlignment(Qt.AlignmentFlag.AlignRight)
 
+        # 加载中占位
+        self.loading_label = QLabel("加载中…", self)
+        loading_font = QFont()
+        loading_font.setPointSize(11)
+        self.loading_label.setFont(loading_font)
+        self.loading_label.setStyleSheet("color: #8892c9; background: transparent;")
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
     def _gather_info(self):
         items = []
         items.append(("LuwuOS 版本", "2.0.0"))
@@ -454,13 +476,47 @@ class AboutPage(QWidget):
         items.append(("SN", f"{get_sn_short()}{get_mac_address()}"))
         return items
 
+    def _build_info_labels(self):
+        """首次进入 about 页时才采集信息并创建 labels。"""
+        # 清理旧 label（多次重入也能刷新）
+        for lbl in self.info_labels:
+            lbl.setParent(None)
+            lbl.deleteLater()
+        self.info_labels = []
+
+        self.info_items = self._gather_info()
+        for key, value in self.info_items:
+            lbl = QLabel(f"{key}:  {value}", self)
+            lbl_font = QFont()
+            lbl_font.setPointSize(9)
+            lbl.setFont(lbl_font)
+            lbl.setStyleSheet("color: #c0c8e0; background: transparent; padding: 0px 6px;")
+            lbl.setWordWrap(False)
+            self.info_labels.append(lbl)
+        self._info_loaded = True
+
+    def on_enter(self):
+        """被 SettingsStack.navigate_to('about') 调用，首次进入时采集信息。"""
+        if self._info_loaded:
+            return
+        # 先显示“加载中”占位，下一个事件循环再采集信息，避免首帧被阻塞
+        self.loading_label.show()
+        self.loading_label.raise_()
+        QTimer.singleShot(0, self._do_load_info)
+
+    def _do_load_info(self):
+        self._build_info_labels()
+        self.loading_label.hide()
+        self._relayout_items()
+        self.update()
+
     def refresh_language(self):
         self.la = load_language()
 
     def _visible_count(self):
         h = self.height()
-        if h == 0:
-            return len(self.info_items)
+        if h == 0 or not self.info_items:
+            return 1
         top_margin = 28
         bottom_margin = 32
         avail = h - top_margin - bottom_margin
@@ -495,10 +551,14 @@ class AboutPage(QWidget):
 
         # Keep selection in visible range after resize
         self.visible_count = self._visible_count()
-        if self.scroll_offset > len(self.info_items) - self.visible_count:
+        if self.info_items and self.scroll_offset > len(self.info_items) - self.visible_count:
             self.scroll_offset = max(0, len(self.info_items) - self.visible_count)
 
         self._relayout_items()
+
+        # Loading label 居中
+        if hasattr(self, "loading_label"):
+            self.loading_label.setGeometry(0, h // 2 - 15, w, 30)
 
         pad = 12
         self.corner_tl.move(pad, pad)
@@ -839,9 +899,8 @@ class LanguagePage(QWidget):
             self.en_selected = True
             self.update()
         elif ev.key() == Qt.Key.Key_Back:
-            # Save language and restart
-            with open(LANGUAGE_INI, "w") as f:
-                f.write(self.content)
+            # Save language (写入全局 configs/language.ini) and restart
+            set_lang_code(self.content)
             saved_text = self.la.get("LANGUAGE", {}).get("SAVED", "Saved!")
             self.saved_label.setText(saved_text)
             self.saved_label.show()
@@ -1370,6 +1429,9 @@ class SettingsStack(QStackedWidget):
                 widget.la = load_language()
                 if hasattr(widget, 'update'):
                     widget.update()
+            # 页面进入钩子，用于懒加载信息（如 AboutPage）
+            if hasattr(widget, 'on_enter'):
+                widget.on_enter()
 
 
 # ============================================================================

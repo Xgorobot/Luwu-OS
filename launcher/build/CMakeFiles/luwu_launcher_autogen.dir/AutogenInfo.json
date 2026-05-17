@@ -243,6 +243,12 @@
 			null
 		],
 		[
+			"/home/pi/luwu-os/launcher/i18n.h",
+			"Mu",
+			"EWIEGA46WW/moc_i18n.cpp",
+			null
+		],
+		[
 			"/home/pi/luwu-os/launcher/keyfilter.h",
 			"Mu",
 			"EWIEGA46WW/moc_keyfilter.cpp",
@@ -315,6 +321,7 @@
 	[
 		[ "/home/pi/luwu-os/launcher/demogridview.cpp", "Mu", null ],
 		[ "/home/pi/luwu-os/launcher/galleryview.cpp", "Mu", null ],
+		[ "/home/pi/luwu-os/launcher/i18n.cpp", "Mu", null ],
 		[ "/home/pi/luwu-os/launcher/main.cpp", "Mu", null ],
 		[ "/home/pi/luwu-os/launcher/statusbar.cpp", "Mu", null ]
 	],

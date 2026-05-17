@@ -5,9 +5,10 @@
 #include <QRect>
 
 struct DemoItem {
-    const char *name;
-    const char *color;   // hex color for placeholder icon
-    const char *appPath; // placeholder, not used yet
+    const char *name;     // 中文名称
+    const char *nameEn;   // 英文名称
+    const char *color;    // hex color for placeholder icon
+    const char *appPath;  // placeholder, not used yet
     const char *iconFile; // icon image file name
 };
 
@@ -21,6 +22,7 @@ public:
     void moveSelection(int delta);
     int selectedDemoIndex() const { return selectedIdx; }
     QString selectedDemoPath() const;
+    void retranslate();  // 重新根据当前语言设置 demo 名称
 
 signals:
     void backPressed();

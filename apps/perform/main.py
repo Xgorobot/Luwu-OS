@@ -45,8 +45,9 @@ mark("xgolib import done")
 
 # ===================== 常量 =====================
 AUTO_EXIT_SEC = 600       # 10分钟自动退出
-EXPR_PATH = "/home/pi/XGO-PI-CM5/common/demos/expression/dog_LM"
-MUSIC_PATH = "/home/pi/XGO-PI-CM5/common/music/Dream.mp3"
+# 资源已迁移至 luwu-os/assets，彻底解耦 XGO-PI-CM5 依赖
+EXPR_PATH = "/home/pi/luwu-os/assets/expressions/dog_LM"
+MUSIC_PATH = "/home/pi/luwu-os/assets/music/Dream.mp3"
 
 # 表情列表：(目录名, 帧数)
 EXPRESSIONS = [
@@ -58,6 +59,18 @@ EXPRESSIONS = [
 ]
 
 FRAME_DELAY = 0.01   # 帧间延迟(秒), 约 100fps
+
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {"hint_exit": "B 退出"},
+        "en": {"hint_exit": "B Exit"},
+    })
+except Exception:
+    _T = lambda k, *a: k
 
 
 # ===================== 表情播放线程 =====================
@@ -119,7 +132,7 @@ class PerformPage(QWidget):
 
         # ---- 操作提示 (底部覆盖) ----
         hint_style = "color: #3a4060; font-size: 10px; background: transparent;"
-        self.hint_bl = QLabel("B 退出", self)
+        self.hint_bl = QLabel(_T("hint_exit"), self)
         self.hint_bl.setStyleSheet(hint_style)
 
         # ---- 自动退出 ----

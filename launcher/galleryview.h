@@ -15,7 +15,8 @@ static constexpr int ANIM_DURATION_MS = 220;
 static constexpr int ANIM_TICK_MS = 20;
 
 struct CardData {
-    const char *title;
+    const char *title;     // 中文标题
+    const char *titleEn;   // 英文标题
     const char *imageFile;
     const char *appPath;
 };
@@ -36,6 +37,7 @@ public:
     QString selectedAppPath() const;
     void moveSelection(int delta);
     bool isAnimating() const;
+    void retranslate();  // 重新根据当前语言设置卡片文字
 
 signals:
     void enterPressed(int index);

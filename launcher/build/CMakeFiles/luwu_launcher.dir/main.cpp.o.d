@@ -410,6 +410,8 @@ CMakeFiles/luwu_launcher.dir/main.cpp.o: \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/QTimer \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qtimer.h \
  /usr/include/aarch64-linux-gnu/qt6/QtCore/qbasictimer.h \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/QFileSystemWatcher \
+ /usr/include/aarch64-linux-gnu/qt6/QtCore/qfilesystemwatcher.h \
  /usr/include/fcntl.h /usr/include/aarch64-linux-gnu/bits/fcntl.h \
  /usr/include/aarch64-linux-gnu/bits/fcntl-linux.h \
  /usr/include/aarch64-linux-gnu/bits/types/struct_iovec.h \

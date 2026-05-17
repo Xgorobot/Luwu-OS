@@ -1,4 +1,5 @@
 #include "demogridview.h"
+#include "i18n.h"
 #include <QPainter>
 #include <QResizeEvent>
 #include <QKeyEvent>
@@ -8,17 +9,17 @@
 
 static constexpr const char *ASSET_DIR = "/home/pi/luwu-os/launcher/assets/";
 
-// 示例程序列表：名字 + 颜色 + appPath + iconFile
+// 示例程序列表：中文名 + 英文名 + 颜色 + appPath + iconFile
 static const DemoItem DEMOS[] = {
-    {"\u8868\u6f14\u6a21\u5f0f", "#3498DB", "apps/perform/main.py", "demo_perform.png"},
-    {"\u56fe\u4f20\u6a21\u5f0f", "#E74C3C", "apps/rc_mode/main.py", "demo_rc.png"},
-    {"\u70ed\u70b9\u6a21\u5f0f", "#9B59B6", "apps/hotspot/main.py", "demo_hotspot.png"},
-    {"\u7fa4\u7ec4\u8868\u6f14", "#E67E22", "apps/group_perform/main.py", "demo_group.png"},
-    {"\u624b\u52bf\u8bc6\u522b", "#FF6B6B", "apps/gesture/main.py", "demo_gesture.png"},
-    {"\u4eba\u8138\u8ddf\u968f", "#4A90D9", "apps/face_follow/main.py", "demo_face_track.png"},
-    {"小球抓取", "#50C878", "apps/ball_catch/main.py", "demo_ball_track.png"},
-    {"\u624b\u67c4\u63a7\u5236", "#FFD93D", "apps/joystick/main.py", "demo_gamepad.png"},
-    {"\u96f7\u8fbe\u626b\u63cf", "#2ECC71", "apps/radar/main.py", "demo_radar.png"},
+    {"表演模式", "Performance", "#3498DB", "apps/perform/main.py",       "demo_perform.png"},
+    {"图传模式", "RC Mode",     "#E74C3C", "apps/rc_mode/main.py",       "demo_rc.png"},
+    {"热点模式", "Hotspot",     "#9B59B6", "apps/hotspot/main.py",       "demo_hotspot.png"},
+    {"群组表演", "Group Show",  "#E67E22", "apps/group_perform/main.py", "demo_group.png"},
+    {"手势识别", "Gesture",     "#FF6B6B", "apps/gesture/main.py",       "demo_gesture.png"},
+    {"人脸跟随", "Face Follow", "#4A90D9", "apps/face_follow/main.py",   "demo_face_track.png"},
+    {"小球抓取", "Ball Catch",  "#50C878", "apps/ball_catch/main.py",    "demo_ball_track.png"},
+    {"手柄控制", "Joystick",    "#FFD93D", "apps/joystick/main.py",      "demo_gamepad.png"},
+    {"雷达扫描", "Radar",       "#2ECC71", "apps/radar/main.py",         "demo_radar.png"},
 };
 static constexpr int DEMO_COUNT = sizeof(DEMOS) / sizeof(DEMOS[0]);
 
@@ -95,7 +96,8 @@ DemoGridView::DemoGridView(QWidget *parent)
         icon->setStyleSheet("background: transparent;");
         itemIcons.append(icon);
 
-        auto *lbl = new QLabel(DEMOS[i].name, this);
+        auto *lbl = new QLabel(luwu::tr(QString::fromUtf8(DEMOS[i].name),
+                                        QString::fromUtf8(DEMOS[i].nameEn)), this);
         lbl->setAlignment(Qt::AlignCenter);
         lbl->setAttribute(Qt::WA_TransparentForMouseEvents);
         lbl->setStyleSheet("color: #1a3a6e; font-size: 11px; background: transparent;");
@@ -110,6 +112,15 @@ DemoGridView::DemoGridView(QWidget *parent)
         updateSelectionStyle();
         updateCornerPositions();
     });
+}
+
+void DemoGridView::retranslate() {
+    for (int i = 0; i < itemLabels.size() && i < demoItems.size(); ++i) {
+        if (itemLabels[i]) {
+            itemLabels[i]->setText(luwu::tr(QString::fromUtf8(demoItems[i].name),
+                                            QString::fromUtf8(demoItems[i].nameEn)));
+        }
+    }
 }
 
 void DemoGridView::loadImages() {

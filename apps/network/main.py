@@ -31,14 +31,29 @@ from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
 # ========================================================================
 # Configuration
 # ========================================================================
-LANGUAGE_INI = "/home/pi/XGO-PI-CM5/common/language/language.ini"
-FONT_PATH = "/home/pi/XGO-PI-CM5/common/model/msyh.ttc"
+# 接入 luwu-os 全局 i18n（去除 XGO-PI-CM5 依赖）
+LUWU_ROOT = "/home/pi/luwu-os"
+if LUWU_ROOT not in sys.path:
+    sys.path.insert(0, LUWU_ROOT)
+try:
+    from libs.i18n import get_lang as _i18n_get_lang, FONT_PATH as _I18N_FONT_PATH
+except Exception:
+    _i18n_get_lang = None
+    _I18N_FONT_PATH = ""
+
+LANGUAGE_INI = "/home/pi/luwu-os/configs/language.ini"
+FONT_PATH = _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
 
 # ========================================================================
 # Language support
 # ========================================================================
 def _detect_language():
+    if _i18n_get_lang:
+        try:
+            return _i18n_get_lang()
+        except Exception:
+            pass
     try:
         with open(LANGUAGE_INI, "r") as f:
             lang = f.read().strip()

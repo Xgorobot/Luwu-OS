@@ -59,6 +59,26 @@ except Exception as _e:
 # ===================== 常量 =====================
 CAM_W, CAM_H = 320, 240
 
+# ===================== i18n =====================
+if "/home/pi/luwu-os" not in sys.path:
+    sys.path.insert(0, "/home/pi/luwu-os")
+try:
+    from libs.i18n import Translator as _Translator
+    _T = _Translator({
+        "cn": {
+            "camera_starting": "启动摄像头中...",
+            "corner_exit": "C: 退出",
+            "camera_error": "摄像头错误: {}",
+        },
+        "en": {
+            "camera_starting": "Camera starting...",
+            "corner_exit": "C: Exit",
+            "camera_error": "Camera error: {}",
+        },
+    })
+except Exception:
+    _T = lambda k, *a: k
+
 PALM_MODEL = '/home/pi/luwu-os/model/palm_detection_mediapipe_2023feb.onnx'
 HAND_MODEL = '/home/pi/luwu-os/model/handpose_estimation_mediapipe_2023feb.onnx'
 
@@ -305,7 +325,7 @@ class GesturePage(QWidget):
         self._first_paint_logged = False
 
         # ---- 全屏摄像头画面 ----
-        self.camera_label = QLabel("启动摄像头中...", self)
+        self.camera_label = QLabel(_T("camera_starting"), self)
         self.camera_label.setStyleSheet(
             "background-color: black; color: #666;"
         )
@@ -314,7 +334,7 @@ class GesturePage(QWidget):
 
         # ---- 四角按键提示 ----
         corner_style = "color: rgba(255,255,255,100); font-size: 12px; background: transparent;"
-        self.corner_bl = QLabel("C: 退出", self)
+        self.corner_bl = QLabel(_T("corner_exit"), self)
         self.corner_bl.setStyleSheet(corner_style)
 
         # ---- ONNX 手势检测器 ----
@@ -375,7 +395,7 @@ class GesturePage(QWidget):
             mark("camera started")
         except Exception as e:
             print(f"[gesture] camera init error: {e}", flush=True)
-            self.camera_label.setText(f"摄像头错误: {e}")
+            self.camera_label.setText(_T("camera_error", e))
 
     # ---- 布局事件 ----
     def resizeEvent(self, ev):

@@ -7,6 +7,8 @@ luwu_launcher_autogen/timestamp: \
 	/home/pi/luwu-os/launcher/demogridview.h \
 	/home/pi/luwu-os/launcher/galleryview.cpp \
 	/home/pi/luwu-os/launcher/galleryview.h \
+	/home/pi/luwu-os/launcher/i18n.cpp \
+	/home/pi/luwu-os/launcher/i18n.h \
 	/home/pi/luwu-os/launcher/keyfilter.h \
 	/home/pi/luwu-os/launcher/main.cpp \
 	/home/pi/luwu-os/launcher/statusbar.cpp \
