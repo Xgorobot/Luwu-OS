@@ -99,3 +99,37 @@ def chip(state: str = "info") -> str:
 
 def transparent() -> str:
     return "background: transparent;"
+
+
+def overlay_pill(role: str = "body", color: str = None, strong: bool = False) -> str:
+    """摄像头/全屏画面上的叠加胶囊样式。
+
+    主体是半透明深色底 + 主题色文字，保证有足够对比度。
+    role: title / subtitle / body / hint / caption
+    color: 可传入语义色覆盖默认白字（如 :data:`Color.success`）
+    strong: True 时用更深的底、适合状态/标题
+    """
+    role_map = {
+        "title":    (Font.title,    True),
+        "subtitle": (Font.subtitle, True),
+        "body":     (Font.body,     True),
+        "hint":     (Font.hint,     False),
+        "caption":  (Font.caption,  False),
+    }
+    size, bold = role_map.get(role, role_map["body"])
+    weight = "bold" if bold else "normal"
+    bg = Color.overlay_pill_bg_strong if strong else Color.overlay_pill_bg
+    fg = color or Color.text_invert
+    return (
+        f"color: {fg};"
+        f"font-size: {size}px;"
+        f"font-weight: {weight};"
+        f"background-color: {bg};"
+        f"border-radius: {Radius.sm}px;"
+        "padding: 4px 10px;"
+    )
+
+
+def corner_pill(color: str = None) -> str:
+    """4 角按键提示胶囊（叠加在全屏画面上）。"""
+    return overlay_pill("caption", color=color or Color.text_invert)

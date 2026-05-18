@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from PySide6.QtCore import Qt, QTimer, QSocketNotifier
 from PySide6.QtGui import QKeyEvent, QImage, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget, QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 # ========================================================================
 # 配置常量
@@ -39,7 +39,7 @@ PICS_DIR = os.path.join(APP_DIR, "pics")
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
 BLOCKLY_PORT = 8000
 
-# 接入 luwu-os 全局 i18n（去除 XGO-PI-CM5 依赖）
+# 接入 luwu-os 全局 i18n 与主题
 LUWU_ROOT = "/home/pi/luwu-os"
 if LUWU_ROOT not in sys.path:
     sys.path.insert(0, LUWU_ROOT)
@@ -49,8 +49,17 @@ except Exception:
     _i18n_get_lang = None
     _I18N_FONT_PATH = ""
 
+from libs.theme import (
+    apply_app_palette,
+    qss as T_qss,
+    Color as T_Color,
+    ColorRGB as T_RGB,
+    Asset as T_Asset,
+)
+from libs.ui import AppFrame
+
 LANGUAGE_INI = "/home/pi/luwu-os/configs/language.ini"
-FONT_PATH = _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+FONT_PATH = T_Asset.font_path or _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
 
 # xgo_blockly 相关路径（使用系统 Python，xgo_blockly 已安装）
 BLOCKLY_PYTHON = sys.executable  # 系统 python3
@@ -417,12 +426,11 @@ class FileListManager:
 # ========================================================================
 # 主界面 Widget
 # ========================================================================
-class CodingPage(QWidget):
+class CodingPage(AppFrame):
     """图形编程主界面。"""
 
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("background-color: #0a0a1a;")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # --- 页面状态 ---
@@ -436,29 +444,8 @@ class CodingPage(QWidget):
         # --- 显示 Label (fullscreen) ---
         self.display_label = QLabel(self)
         self.display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.display_label.setStyleSheet("background-color: #0a0a1a;")
-
-        # --- 四角按键提示 Label ---
-        corner_style = (
-            "color: #ffffff; font-size: 13px; font-weight: bold; "
-            "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-        )
-        self.corner_tl = QLabel("", self)
-        self.corner_tl.setStyleSheet(corner_style)
-        self.corner_tr = QLabel("", self)
-        self.corner_tr.setStyleSheet(corner_style)
-        self.corner_bl = QLabel("", self)
-        self.corner_bl.setStyleSheet(corner_style)
-        self.corner_br = QLabel("", self)
-        self.corner_br.setStyleSheet(corner_style)
-
-        # --- 状态栏 (底部中间，选中文案/运行状态) ---
-        self.status_label = QLabel("", self)
-        self.status_label.setStyleSheet(
-            "color: #18df6b; font-size: 11px; "
-            "background-color: rgba(0,0,0,0.5); padding: 2px 8px; border-radius: 3px;"
-        )
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.display_label.setStyleSheet(f"background-color: rgb{T_RGB.bg_solid};")
+        self.display_label.lower()  # 让 AppFrame 的角标 widget 浮在上面
 
         # --- 管理器 ---
         self.service_manager = BlocklyServiceManager()
@@ -493,13 +480,23 @@ class CodingPage(QWidget):
         # --- 图标预加载 ---
         self._icon_ai = None
         self._icon_blockly = None
-        self._icon_wifi = None
         self._load_icons()
+
+        # --- launcher 同款桌面背景图（PIL 画布底） ---
+        self._bg_pil = None
+        try:
+            if os.path.exists(T_Asset.bg_image):
+                self._bg_pil = Image.open(T_Asset.bg_image).convert("RGB").resize((320, 240))
+        except Exception as e:
+            print(f"[coding] bg image load error: {e}", flush=True)
 
         # --- 启动 loading 动画（每 400ms 刷新一次）---
         self._loading_timer = QTimer(self)
         self._loading_timer.timeout.connect(self._animate_loading)
         self._loading_timer.start(400)
+
+        # 先应用一次角标（LOADING 页只亮 C 返回）
+        self._update_corner_labels()
 
         # --- 延迟启动服务 ---
         QTimer.singleShot(200, self._start_service)
@@ -513,15 +510,12 @@ class CodingPage(QWidget):
     def _load_icons(self):
         ai_path = os.path.join(PICS_DIR, "icon_ai.png")
         blockly_path = os.path.join(PICS_DIR, "icon_blockly.png")
-        wifi_path = os.path.join(PICS_DIR, "wifi@2x.jpg")
 
         try:
             if os.path.exists(ai_path):
                 self._icon_ai = Image.open(ai_path).resize((60, 60))
             if os.path.exists(blockly_path):
                 self._icon_blockly = Image.open(blockly_path).resize((60, 60))
-            if os.path.exists(wifi_path):
-                self._icon_wifi = Image.open(wifi_path).resize((30, 26))
         except Exception as e:
             print(f"[coding] icon load error: {e}", flush=True)
 
@@ -569,6 +563,7 @@ class CodingPage(QWidget):
             print("[coding] program exited unexpectedly", flush=True)
             self.program_runner.is_running = False
             if self.current_page == PAGE_FILE_LIST:
+                self._update_corner_labels()  # 同步右下 D 运行/停止
                 self._page_needs_redraw = True
                 self._render_and_display()
 
@@ -652,14 +647,13 @@ class CodingPage(QWidget):
                 # 正在运行 → 停止
                 print("[coding] D pressed → stop program", flush=True)
                 self.program_runner.stop()
-                self._page_needs_redraw = True
-                self._render_and_display()
             else:
                 # 未运行 → 启动
                 print(f"[coding] D pressed → run: {selected}", flush=True)
                 self.program_runner.run(selected)
-                self._page_needs_redraw = True
-                self._render_and_display()
+            self._update_corner_labels()  # 右下 D 文案随运行状态实时切换
+            self._page_needs_redraw = True
+            self._render_and_display()
         elif key == Qt.Key.Key_Back:  # C → 返回主页
             print("[coding] C pressed → back to main", flush=True)
             self.current_page = PAGE_MAIN
@@ -674,67 +668,37 @@ class CodingPage(QWidget):
         self.service_manager.stop()
         self.close()
 
-    # ---- 四角标签更新 ----
+    # ---- 四角标签更新（走 AppFrame）----
     def _update_corner_labels(self):
         if self.current_page == PAGE_MAIN:
-            self.corner_tl.setText("")          # 左上：无
-            self.corner_tr.setText("")           # 右上：无
-            self.corner_bl.setText(t("c_back"))  # 左下：C 返回退出
-            self.corner_br.setText(t("d_enter")) # 右下：D 进入列表
-            self.corner_bl.setStyleSheet(
-                "color: #cccccc; font-size: 13px; font-weight: bold; "
-                "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-            )
-            self.corner_br.setStyleSheet(
-                "color: #a78bfa; font-size: 13px; font-weight: bold; "
-                "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
+            self.setCornerHints(
+                tl="", tr="",
+                bl=("", T_Asset.icon_back),
+                br=(t("program_list"), T_Asset.icon_enter),
             )
         elif self.current_page == PAGE_FILE_LIST:
-            self.corner_tl.setText(t("a_up"))     # 左上：A 上移
-            self.corner_tr.setText(t("b_down"))   # 右上：B 下移
-            self.corner_bl.setText(t("c_back"))   # 左下：C 返回
-            if self.program_runner.check_alive():
-                self.corner_br.setText(t("d_stop"))  # 右下：D 停止
-                self.corner_br.setStyleSheet(
-                    "color: #ff6b6b; font-size: 13px; font-weight: bold; "
-                    "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-                )
-            else:
-                self.corner_br.setText(t("d_run"))   # 右下：D 运行
-                self.corner_br.setStyleSheet(
-                    "color: #18df6b; font-size: 13px; font-weight: bold; "
-                    "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-                )
-            self.corner_tl.setStyleSheet(
-                "color: #cccccc; font-size: 13px; font-weight: bold; "
-                "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
+            running = self.program_runner.check_alive()
+            d_text = t("d_stop") if running else t("d_run")
+            self.setCornerHints(
+                tl=(t("a_up"), T_Asset.icon_left),
+                tr=(t("b_down"), T_Asset.icon_right),
+                bl=(t("c_back"), T_Asset.icon_back),
+                br=(d_text, T_Asset.icon_enter),
             )
-            self.corner_tr.setStyleSheet(
-                "color: #cccccc; font-size: 13px; font-weight: bold; "
-                "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
+        elif self.current_page == PAGE_LOADING:
+            self.setCornerHints(
+                tl="", tr="", br="",
+                bl=(t("c_back"), T_Asset.icon_back),
             )
-            self.corner_bl.setStyleSheet(
-                "color: #cccccc; font-size: 13px; font-weight: bold; "
-                "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-            )
-
-        self._reposition_corners()
-
-    def _reposition_corners(self):
-        w, h = self.width(), self.height()
-        pad = 8
-        for lbl in [self.corner_tl, self.corner_tr, self.corner_bl, self.corner_br]:
-            lbl.adjustSize()
-            lbl.raise_()
-        self.corner_tl.move(pad, pad)
-        self.corner_tr.move(w - self.corner_tr.width() - pad, pad)
-        self.corner_bl.move(pad, h - self.corner_bl.height() - pad)
-        self.corner_br.move(w - self.corner_br.width() - pad, h - self.corner_br.height() - pad)
 
     # ---- PIL 渲染 ----
     def _render_and_display(self):
         """使用 PIL 渲染当前页面，转换为 QPixmap 显示。"""
-        bg = Image.new("RGB", (320, 240), (10, 10, 26))
+        # 背景优先用 launcher 同款渐变图，图不在时回落 bg_solid
+        if self._bg_pil is not None:
+            bg = self._bg_pil.copy()
+        else:
+            bg = Image.new("RGB", (320, 240), T_RGB.bg_solid)
         draw = ImageDraw.Draw(bg)
 
         if self.current_page == PAGE_LOADING:
@@ -773,22 +737,22 @@ class CodingPage(QWidget):
 
     def _render_loading_page(self, draw, bg):
         """渲染加载页面：图标 + 启动中 + 动画点。"""
-        # 背景渐变条（简单的视觉元素）
+        # 背景进度条
         bar_y = 130
         bar_h = 4
         bar_max_w = 200
         bar_x = (320 - bar_max_w) // 2
-        # 进度条背景
+        # 进度条背景轨道
         draw.rectangle(
             [(bar_x, bar_y), (bar_x + bar_max_w, bar_y + bar_h)],
-            fill=(30, 30, 50),
+            fill=T_RGB.bg_track,
         )
         # 进度条前景（根据 loading_frame 增长）
         progress = (self._loading_frame + 1) * (bar_max_w // 4)
         if progress > 0:
             draw.rectangle(
                 [(bar_x, bar_y), (bar_x + progress, bar_y + bar_h)],
-                fill=(100, 140, 255),
+                fill=T_RGB.accent,
             )
 
         # AI 图标 (右侧)
@@ -800,59 +764,72 @@ class CodingPage(QWidget):
         # 标题
         title = t("main_title")
         tw = draw.textbbox((0, 0), title, font=self._font16)[2]
-        draw.text(((320 - tw) // 2, 100), title, font=self._font16, fill=(180, 200, 255))
+        draw.text(((320 - tw) // 2, 100), title, font=self._font16, fill=T_RGB.text_primary)
 
-        # "正在启动服务" + 动画点
+        # “正在启动服务” + 动画点
         dots = "." * (self._loading_frame + 1)
         loading_text = t("loading") + dots
         lw = draw.textbbox((0, 0), loading_text, font=self._font14)[2]
-        draw.text(((320 - lw) // 2, 145), loading_text, font=self._font14, fill=(200, 200, 200))
+        draw.text(((320 - lw) // 2, 145), loading_text, font=self._font14, fill=T_RGB.accent)
 
         # 副标题
         hint = t("loading_hint")
         hw = draw.textbbox((0, 0), hint, font=self._font12)[2]
-        draw.text(((320 - hw) // 2, 170), hint, font=self._font12, fill=(120, 120, 140))
-
-        # 左下 C 退出提示
-        hint_c = t("c_back")
-        cw = draw.textbbox((0, 0), hint_c, font=self._font10)[2]
-        draw.text((10, 220), hint_c, font=self._font10, fill=(180, 180, 180))
+        draw.text(((320 - hw) // 2, 170), hint, font=self._font12, fill=T_RGB.text_muted)
 
     def _render_main_page(self, draw, bg):
         """渲染主页面：图标 + IP:port。"""
-        # AI 图标 (右侧)
-        self._paste_icon(bg, self._icon_ai, (170, 40))
+        # 顶部标题
+        title = t("main_title")
+        tw2 = draw.textbbox((0, 0), title, font=self._font16)[2]
+        draw.text(((320 - tw2) // 2, 14), title, font=self._font16, fill=T_RGB.text_primary)
 
-        # Blockly 图标 (左侧)
-        self._paste_icon(bg, self._icon_blockly, (90, 40))
+        # 标题下装饰线
+        line_w = 60
+        draw.rectangle(
+            [((320 - line_w) // 2, 38), ((320 + line_w) // 2, 40)],
+            fill=T_RGB.accent,
+        )
 
-        # WiFi 图标
-        self._paste_icon(bg, self._icon_wifi, (26, 160))
+        # AI 图标 (右侧) / Blockly 图标 (左侧)
+        self._paste_icon(bg, self._icon_ai, (170, 56))
+        self._paste_icon(bg, self._icon_blockly, (90, 56))
 
+        # IP 卡片（白底圆角，仅居中放 IP:port）
+        card_x, card_y, card_w, card_h = 30, 138, 260, 50
+        draw.rounded_rectangle(
+            [(card_x, card_y), (card_x + card_w, card_y + card_h)],
+            radius=10,
+            fill=T_RGB.bg_card,
+            outline=T_RGB.bg_track,
+            width=1,
+        )
         # IP:port
         ip_text = f"{self.local_ip}:{BLOCKLY_PORT}"
         tw = draw.textbbox((0, 0), ip_text, font=self._font14)[2]
-        draw.text(((320 - tw) // 2, 160), ip_text, font=self._font14, fill=(255, 255, 255))
+        draw.text(
+            (card_x + (card_w - tw) // 2, card_y + (card_h - 16) // 2),
+            ip_text, font=self._font14, fill=T_RGB.accent,
+        )
 
-        # 标题
-        title = t("main_title")
-        tw2 = draw.textbbox((0, 0), title, font=self._font16)[2]
-        draw.text(((320 - tw2) // 2, 120), title, font=self._font16, fill=(180, 200, 255))
-
-        # 提示：右下 D 进入，左下 C 退出
-        hint_d = t("d_enter")
-        hint_c = t("c_back")
-        dw = draw.textbbox((0, 0), hint_d, font=self._font10)[2]
-        cw = draw.textbbox((0, 0), hint_c, font=self._font10)[2]
-        draw.text((310 - dw, 220), hint_d, font=self._font10, fill=(170, 140, 255))
-        draw.text((10, 220), hint_c, font=self._font10, fill=(180, 180, 180))
+        # 服务运行中提示
+        running_text = t("service_running")
+        rw = draw.textbbox((0, 0), running_text, font=self._font12)[2]
+        draw.text(((320 - rw) // 2, 200), running_text, font=self._font12, fill=T_RGB.success)
 
     def _render_file_list(self, draw, bg):
         """渲染文件列表页面。"""
         # 标题
         title = t("program_list")
         tw = draw.textbbox((0, 0), title, font=self._font16)[2]
-        draw.text(((320 - tw) // 2, 6), title, font=self._font16, fill=(200, 200, 255))
+        draw.text(((320 - tw) // 2, 8), title, font=self._font16, fill=T_RGB.text_primary)
+
+        # 标题下装饰线
+        line_w = 50
+        draw.rectangle(
+            [((320 - line_w) // 2, 30), ((320 + line_w) // 2, 32)],
+            fill=T_RGB.accent,
+        )
 
         fm = self.file_list_manager
 
@@ -860,11 +837,11 @@ class CodingPage(QWidget):
         if not fm.files:
             no_text = t("no_program")
             nw = draw.textbbox((0, 0), no_text, font=self._font14)[2]
-            draw.text(((320 - nw) // 2, 100), no_text, font=self._font14, fill=(150, 150, 150))
+            draw.text(((320 - nw) // 2, 110), no_text, font=self._font14, fill=T_RGB.text_muted)
             return
 
         # 列出文件
-        start_y = 36
+        start_y = 42
         item_h = 28
         visible = fm.visible_count
 
@@ -873,13 +850,15 @@ class CodingPage(QWidget):
             y = start_y + rel * item_h
             is_sel = (i == fm.selected_index)
 
-            # 背景
+            # 选中行：accent 蓝圆角底白字；未选中：不画底，让桃面背景透出
             if is_sel:
-                draw.rectangle([(6, y), (314, y + item_h - 2)], fill=(70, 55, 140))
-                text_color = (255, 255, 255)
+                draw.rounded_rectangle(
+                    [(8, y), (312, y + item_h - 4)],
+                    radius=6, fill=T_RGB.accent,
+                )
+                text_color = T_RGB.text_invert
             else:
-                draw.rectangle([(6, y), (314, y + item_h - 2)], fill=(40, 40, 60))
-                text_color = (200, 200, 200)
+                text_color = T_RGB.text_primary
 
             # 文件名（去 .py 后缀，截断）
             filename = fm.files[i]
@@ -887,21 +866,7 @@ class CodingPage(QWidget):
             if len(display_name) > 16:
                 display_name = display_name[:13] + "..."
 
-            draw.text((14, y + 5), display_name, font=self._font12, fill=text_color)
-
-        # 四角提示（在 PIL 上也画一份作视觉参考）
-        a_up = t("a_up")
-        b_down = t("b_down")
-        c_back = t("c_back")
-        d_action = t("d_stop") if self.program_runner.check_alive() else t("d_run")
-        d_color = (255, 100, 100) if self.program_runner.check_alive() else (100, 255, 120)
-
-        draw.text((6, 6), a_up, font=self._font10, fill=(180, 180, 180))
-        bw = draw.textbbox((0, 0), b_down, font=self._font10)[2]
-        draw.text((314 - bw, 6), b_down, font=self._font10, fill=(180, 180, 180))
-        draw.text((6, 220), c_back, font=self._font10, fill=(180, 180, 180))
-        dw2 = draw.textbbox((0, 0), d_action, font=self._font10)[2]
-        draw.text((314 - dw2, 220), d_action, font=self._font10, fill=d_color)
+            draw.text((18, y + 5), display_name, font=self._font12, fill=text_color)
 
         # 底部状态：运行中/已停止 + 文件名
         if self.program_runner.check_alive():
@@ -912,21 +877,15 @@ class CodingPage(QWidget):
                     short_name = short_name[:15] + "..."
                 status_txt = f"{t('running')} {short_name}"
                 sw = draw.textbbox((0, 0), status_txt, font=self._font10)[2]
-                draw.text(((320 - sw) // 2, 195), status_txt, font=self._font10, fill=(100, 255, 120))
+                draw.text(((320 - sw) // 2, 218), status_txt, font=self._font10, fill=T_RGB.success)
 
     # ---- 布局 ----
     def resizeEvent(self, ev):
-        super().resizeEvent(ev)
+        super().resizeEvent(ev)  # AppFrame 负责背景 + 4 角重排
         w, h = self.width(), self.height()
         if w > 100 and h > 100:
             self.display_label.setGeometry(0, 0, w, h)
-            self._reposition_corners()
-            self.status_label.adjustSize()
-            self.status_label.move(
-                (w - self.status_label.width()) // 2,
-                h - self.status_label.height() - 34,
-            )
-            self.status_label.raise_()
+            self.display_label.lower()
             # 尺寸变化时立即重绘，避免先小后大
             self._render_and_display()
 
@@ -957,6 +916,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: QApplication.instance().quit())
 
     app = QApplication(sys.argv)
+    apply_app_palette(app)
     w = CodingPage()
     w.showFullScreen()
 

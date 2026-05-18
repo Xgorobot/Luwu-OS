@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 from . import qss
 from . import tokens
-from .tokens import Asset, Color, Font, Radius, Spacing
+from .tokens import Asset, Color, ColorRGB, Font, Radius, Spacing, hex_to_rgb
 
 
 def apply_app_palette(app: QApplication) -> None:
@@ -30,7 +30,9 @@ __all__ = [
     "tokens",
     "Asset",
     "Color",
+    "ColorRGB",
     "Font",
     "Radius",
     "Spacing",
+    "hex_to_rgb",
 ]

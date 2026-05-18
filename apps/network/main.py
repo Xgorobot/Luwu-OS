@@ -41,8 +41,17 @@ except Exception:
     _i18n_get_lang = None
     _I18N_FONT_PATH = ""
 
+# 主题层：QSS 工厂 / RGB 调色盘 / 资产
+from libs.theme import (
+    apply_app_palette,
+    qss as T_qss,
+    Color as T_Color,
+    ColorRGB as T_RGB,
+    Asset as T_Asset,
+)
+
 LANGUAGE_INI = "/home/pi/luwu-os/configs/language.ini"
-FONT_PATH = _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+FONT_PATH = T_Asset.font_path or _I18N_FONT_PATH or "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
 
 # ========================================================================
@@ -225,7 +234,9 @@ def _connect_wifi(ssid: str, password: str, security: str = "wpa") -> bool:
 class WifiSetupPage(QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("background-color: #0a0a1a;")
+        # 本页面是“摄像头全屏”型，背景被 camera_label 覆盖；这里只保留一个
+        # 深色兜底供摄像头未启动 / PIL 画面加载间隘使用
+        self.setStyleSheet(f"background-color: rgb{T_RGB.canvas_dark};")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._state = "scanning"       # scanning | connecting | success | failed | reset
@@ -279,30 +290,21 @@ class WifiSetupPage(QWidget):
         # --- Camera display (fullscreen background) ---
         self.camera_label = QLabel(self)
         self.camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.camera_label.setStyleSheet("background-color: black;")
+        self.camera_label.setStyleSheet(f"background-color: rgb{T_RGB.canvas_dark};")
         self.camera_label.lower()  # behind text overlays
 
         # --- Status label (top center overlay) ---
         self.status_label = QLabel(t("scanning"), self)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet(
-            "color: white; font-size: 18px; font-weight: bold; "
-            "background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
-        )
+        self.status_label.setStyleSheet(T_qss.overlay_pill("title", strong=True))
 
         # --- Hint label (bottom center overlay) ---
         self.hint_label = QLabel(t("qr_hint"), self)
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hint_label.setStyleSheet(
-            "color: #aabbee; font-size: 12px; "
-            "background-color: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;"
-        )
+        self.hint_label.setStyleSheet(T_qss.overlay_pill("hint"))
 
-        # --- Corner overlays (left side) ---
-        corner_style = (
-            "color: #ffffff; font-size: 14px; font-weight: bold; "
-            "background-color: rgba(0,0,0,0.65); padding: 3px 8px; border-radius: 4px;"
-        )
+        # --- Corner overlays — 统一走主题 corner_pill ---
+        corner_style = T_qss.corner_pill()
         self.corner_tl = QLabel(t("reset_hint"), self)
         self.corner_tl.setStyleSheet(corner_style)
         self.corner_bl = QLabel(t("exit_hint"), self)
@@ -314,11 +316,10 @@ class WifiSetupPage(QWidget):
         self.corner_tr = QLabel(t("country_hint"), self)
         self.corner_tr.setStyleSheet(corner_style)
 
-        # --- Current WiFi label (top-center) ---
+        # --- Current WiFi label (top-center) — 已连接提示走 success 色 ---
         self.wifi_now_label = QLabel("", self)
         self.wifi_now_label.setStyleSheet(
-            "color: #18df6b; font-size: 11px; font-weight: bold; "
-            "background-color: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 3px;"
+            T_qss.overlay_pill("caption", color=T_Color.success)
         )
 
         # --- Camera ---
@@ -424,7 +425,7 @@ class WifiSetupPage(QWidget):
                                 self._state = "connecting"
                                 self.status_label.setText(t("connecting", ssid))
                                 self.status_label.setStyleSheet(
-                                    "color: cyan; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+                                    T_qss.overlay_pill("title", color=T_Color.accent, strong=True)
                                 )
                                 # Defer connection to avoid blocking UI
                                 QTimer.singleShot(100, self._do_connect)
@@ -439,7 +440,7 @@ class WifiSetupPage(QWidget):
                     (x, y, bw, bh) = barcode.rect
                     # Draw rect on PIL image
                     draw.rectangle(
-                        [(x, y), (x + bw, y + bh)], outline=(0, 255, 0), width=2
+                        [(x, y), (x + bw, y + bh)], outline=T_RGB.success, width=2
                     )
 
             # --- Update hint label text ---
@@ -468,9 +469,7 @@ class WifiSetupPage(QWidget):
                     else:
                         self._state = "scanning"
                         self.status_label.setText(t("scanning"))
-                        self.status_label.setStyleSheet(
-                            "color: white; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
-                        )
+                        self.status_label.setStyleSheet(T_qss.overlay_pill("title", strong=True))
                         self._frame_count = 0
 
         except Exception as e:
@@ -506,7 +505,7 @@ class WifiSetupPage(QWidget):
             self._frame_count = 0
             self.status_label.setText(t("success"))
             self.status_label.setStyleSheet(
-                "color: #18df6b; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+                T_qss.overlay_pill("title", color=T_Color.success, strong=True)
             )
             self._update_current_wifi()
             self._reposition_wifi_label()
@@ -516,7 +515,7 @@ class WifiSetupPage(QWidget):
             self._frame_count = 0
             self.status_label.setText(t("failed"))
             self.status_label.setStyleSheet(
-                "color: #ff6b6b; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+                T_qss.overlay_pill("title", color=T_Color.danger, strong=True)
             )
             print(f"[wifi_setup] Failed to connect to {ssid}", flush=True)
 
@@ -553,7 +552,7 @@ class WifiSetupPage(QWidget):
         self._frame_count = 0
         self.status_label.setText(t("reset"))
         self.status_label.setStyleSheet(
-            "color: #18df6b; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+            T_qss.overlay_pill("title", color=T_Color.success, strong=True)
         )
 
         class _ResetWorker(QThread):
@@ -600,9 +599,7 @@ class WifiSetupPage(QWidget):
         self.wifi_now_label.show()
         self._reposition_wifi_label()
         self.status_label.setText(t("scanning"))
-        self.status_label.setStyleSheet(
-            "color: white; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
-        )
+        self.status_label.setStyleSheet(T_qss.overlay_pill("title", strong=True))
         self.hint_label.setText(t("qr_hint"))
         self._state = "scanning"
         self._frame_count = 0
@@ -666,7 +663,7 @@ class WifiSetupPage(QWidget):
         subprocess.run(["sudo", "reboot"], capture_output=True, text=True)
 
     def _draw_country_ui(self):
-        bg = Image.new('RGB', (320, 240), (10, 10, 26))
+        bg = Image.new('RGB', (320, 240), T_RGB.canvas_dark)
         draw = ImageDraw.Draw(bg)
         try:
             font14 = ImageFont.truetype(FONT_PATH, 14)
@@ -686,7 +683,7 @@ class WifiSetupPage(QWidget):
             y = 70
             for line in lines:
                 tw = draw.textbbox((0, 0), line, font=font18)[2]
-                draw.text(((320 - tw) // 2, y), line, font=font18, fill=(120, 255, 120))
+                draw.text(((320 - tw) // 2, y), line, font=font18, fill=T_RGB.success)
                 y += 36
         elif self._country_step == "country_confirm":
             # Confirm reboot dialog (solid overlay on country list)
@@ -698,21 +695,21 @@ class WifiSetupPage(QWidget):
             bg = bg_rgba.convert('RGB')
             draw = ImageDraw.Draw(bg)
             # Dialog box
-            draw.rectangle([(25, 45), (295, 195)], fill=(20, 20, 40), outline=(120, 255, 120))
+            draw.rectangle([(25, 45), (295, 195)], fill=T_RGB.list_dialog_bg, outline=T_RGB.accent)
             # Confirm text
             title = t("country_confirm_title")
             tw = draw.textbbox((0, 0), title, font=font18)[2]
-            draw.text(((320 - tw) // 2, 62), title, font=font18, fill=(255, 200, 80))
+            draw.text(((320 - tw) // 2, 62), title, font=font18, fill=T_RGB.warning)
             desc = t("country_confirm_desc", self._reboot_code)
             for i, subline in enumerate(desc.split('\n')):
                 tw2 = draw.textbbox((0, 0), subline, font=font14)[2]
-                draw.text(((320 - tw2) // 2, 102 + i * 24), subline, font=font14, fill=(200, 200, 200))
-            # Bottom hints
+                draw.text(((320 - tw2) // 2, 102 + i * 24), subline, font=font14, fill=T_RGB.text_invert)
+            # Bottom hints — 取消走 muted，确认走 accent
             hint_c = t("country_confirm_c")
             hint_d = t("country_confirm_d")
-            draw.text((50, 170), hint_c, font=font12, fill=(180, 180, 180))
+            draw.text((50, 170), hint_c, font=font12, fill=T_RGB.text_muted)
             dw = draw.textbbox((0, 0), hint_d, font=font12)[2]
-            draw.text((320 - dw - 50, 170), hint_d, font=font12, fill=(120, 255, 120))
+            draw.text((320 - dw - 50, 170), hint_d, font=font12, fill=T_RGB.accent)
         else:
             self._draw_country_list(draw, font14, font12)
         result = np.array(bg)
@@ -729,11 +726,11 @@ class WifiSetupPage(QWidget):
     def _draw_country_list(self, draw, font_title, font_item):
         title = t("country_title")
         tw = draw.textbbox((0, 0), title, font=font_title)[2]
-        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=T_RGB.text_invert)
         if self._country_current_code:
             sub = t("country_current", self._country_current_code)
             stw = draw.textbbox((0, 0), sub, font=font_item)[2]
-            draw.text(((320 - stw) // 2, 24), sub, font=font_item, fill=(120, 200, 120))
+            draw.text(((320 - stw) // 2, 24), sub, font=font_item, fill=T_RGB.success)
         start_y = 44
         visible_start = max(0, self._country_cursor - 5)
         visible_count = min(8, len(self._country_list))
@@ -741,8 +738,8 @@ class WifiSetupPage(QWidget):
             code, name = self._country_list[i]
             y = start_y + (i - visible_start) * 24
             if i == self._country_cursor:
-                draw.rectangle([(2, y - 1), (318, y + 21)], fill=(40, 60, 120))
-            draw.text((10, y + 2), f"{code}  {name}", font=font_item, fill=(255, 255, 255))
+                draw.rectangle([(2, y - 1), (318, y + 21)], fill=T_RGB.list_highlight)
+            draw.text((10, y + 2), f"{code}  {name}", font=font_item, fill=T_RGB.text_invert)
         self._draw_corners(draw, font_item, "country")
 
     # ================================================================
@@ -845,9 +842,7 @@ class WifiSetupPage(QWidget):
         self._reposition_wifi_label()
 
         self.status_label.setText(t("scanning"))
-        self.status_label.setStyleSheet(
-            "color: white; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
-        )
+        self.status_label.setStyleSheet(T_qss.overlay_pill("title", strong=True))
         self.hint_label.setText(t("qr_hint"))
         self._state = "scanning"
         self._frame_count = 0
@@ -945,7 +940,7 @@ class WifiSetupPage(QWidget):
 
         self.status_label.setText(t("connecting", self._manual_ssid))
         self.status_label.setStyleSheet(
-            "color: cyan; font-size: 18px; font-weight: bold; background-color: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 4px;"
+            T_qss.overlay_pill("title", color=T_Color.accent, strong=True)
         )
         self.hint_label.setText(t("qr_hint"))
 
@@ -972,8 +967,8 @@ class WifiSetupPage(QWidget):
             bl = t("corner_bl_kb")
             br = t("corner_br_kb")
 
-        margin = 3
-        pad = 3
+        margin = 0   # 贴边，与 AppFrame 规范一致
+        pad = 4
 
         for text, pos in [(tl, "tl"), (tr, "tr"), (bl, "bl"), (br, "br")]:
             bbox = draw.textbbox((0, 0), text, font=font)
@@ -989,15 +984,15 @@ class WifiSetupPage(QWidget):
             else:  # br
                 x, y = 320 - tw - pad * 2 - margin, 240 - th - pad * 2 - margin
 
-            # Semi-transparent black background
+            # 半透明黑背 + 纯白文字（与 Qt 侧 corner_pill 保持一致）
             draw.rectangle(
                 [(x, y), (x + tw + pad * 2, y + th + pad * 2)],
-                fill=(0, 0, 0, 160)
+                fill=T_RGB.overlay_dim
             )
-            draw.text((x + pad, y + pad), text, font=font, fill=(255, 255, 255))
+            draw.text((x + pad, y + pad), text, font=font, fill=T_RGB.text_invert)
 
     def _draw_manual_ui(self):
-        bg = Image.new('RGB', (320, 240), (10, 10, 26))
+        bg = Image.new('RGB', (320, 240), T_RGB.canvas_dark)
         draw = ImageDraw.Draw(bg)
         try:
             font14 = ImageFont.truetype(FONT_PATH, 14)
@@ -1027,10 +1022,10 @@ class WifiSetupPage(QWidget):
     def _draw_wifi_list(self, draw, font_title, font_item):
         title = t("wifi_list_title")
         tw = draw.textbbox((0, 0), title, font=font_title)[2]
-        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+        draw.text(((320 - tw) // 2, 4), title, font=font_title, fill=T_RGB.text_invert)
 
         if not self._wifi_list:
-            draw.text((10, 40), t("wifi_scanning"), font=font_item, fill=(150, 150, 150))
+            draw.text((10, 40), t("wifi_scanning"), font=font_item, fill=T_RGB.text_muted)
             self._draw_corners(draw, font_item, "list")
             return
 
@@ -1042,26 +1037,26 @@ class WifiSetupPage(QWidget):
             ssid, sig, sec = self._wifi_list[i]
             y = start_y + (i - visible_start) * 24
 
-            # Cursor highlight
+            # Cursor highlight — 主题 accent
             if i == self._wifi_cursor:
-                draw.rectangle([(2, y - 1), (318, y + 21)], fill=(40, 60, 120))
+                draw.rectangle([(2, y - 1), (318, y + 21)], fill=T_RGB.list_highlight)
 
-            # Signal bar
+            # Signal bar — 语义色（强/中/弱 = success/warning/danger）
             try:
                 sval = int(sig)
             except Exception:
                 sval = 0
             bars = '▂▄▆█' if sval > 60 else ('▂▄▆' if sval > 40 else ('▂▄' if sval > 20 else '▂'))
-            color = (100, 255, 100) if sval > 60 else ((255, 200, 50) if sval > 30 else (255, 80, 80))
+            color = T_RGB.success if sval > 60 else (T_RGB.warning if sval > 30 else T_RGB.danger)
             draw.text((6, y + 1), bars, font=font_item, fill=color)
 
             # SSID (truncated)
             display_ssid = ssid[:18] + '..' if len(ssid) > 20 else ssid
-            draw.text((52, y + 1), display_ssid, font=font_item, fill=(255, 255, 255))
+            draw.text((52, y + 1), display_ssid, font=font_item, fill=T_RGB.text_invert)
 
             # Security badge (asterisk = has security)
             if sec.upper() not in ('', 'NOPASS'):
-                draw.text((280, y + 2), '*', font=font_item, fill=(200, 200, 200))
+                draw.text((280, y + 2), '*', font=font_item, fill=T_RGB.text_muted)
 
         # Four-corner key hints
         self._draw_corners(draw, font_item, "list")
@@ -1071,12 +1066,12 @@ class WifiSetupPage(QWidget):
         pwd_display = self._manual_password[-20:] if len(self._manual_password) > 20 else self._manual_password
         title = t("password_for", pwd_display if pwd_display else '_' * 8)
         tw1 = draw.textbbox((0, 0), title, font=font_title)[2]
-        draw.text(((320 - tw1) // 2, 4), title, font=font_title, fill=(200, 200, 200))
+        draw.text(((320 - tw1) // 2, 4), title, font=font_title, fill=T_RGB.text_invert)
 
         # Subtitle (centered)
         sub = t("password_title")
         tw2 = draw.textbbox((0, 0), sub, font=font_small)[2]
-        draw.text(((320 - tw2) // 2, 24), sub, font=font_small, fill=(120, 120, 120))
+        draw.text(((320 - tw2) // 2, 24), sub, font=font_small, fill=T_RGB.text_muted)
 
         kb = self._kb_upper if self._kb_shift else self._kb_lower
         key_w = 30
@@ -1084,6 +1079,14 @@ class WifiSetupPage(QWidget):
         margin_x = 10
         start_y = 48
         gap = 2
+
+        # 键盘色板（PIL 用，与主题 token 对齐）
+        KEY_BG_NORMAL   = (52, 60, 84)      # 普通键底 — 深蓝灰
+        KEY_BG_SPECIAL  = (72, 84, 112)     # 特殊键底 — 略亮
+        KEY_BG_OK       = T_RGB.success     # 确认键 — success
+        KEY_BG_OK_HOVER = (52, 200, 110)    # 确认键选中 — success 亮一档
+        KEY_BG_HOVER    = T_RGB.accent      # 一般键选中 — accent
+        KEY_OUTLINE     = T_RGB.text_invert
 
         for row_idx, row in enumerate(kb):
             y = start_y + row_idx * (key_h + gap)
@@ -1093,35 +1096,27 @@ class WifiSetupPage(QWidget):
 
             for col_idx, (display, value) in enumerate(row):
                 kx = x + col_idx * (key_w + gap)
-                # Key background
                 is_cursor = (row_idx == self._kb_cursor_row and col_idx == self._kb_cursor_col)
                 is_ok = (display in ('确定', 'OK'))
 
                 if is_cursor:
-                    if is_ok:
-                        # Highlighted green for confirm
-                        draw.rectangle([(kx - 1, y - 1), (kx + key_w, y + key_h)],
-                                       fill=(30, 180, 60), outline=(255, 255, 255))
-                    else:
-                        draw.rectangle([(kx - 1, y - 1), (kx + key_w, y + key_h)],
-                                       fill=(60, 120, 220), outline=(255, 255, 255))
+                    fill = KEY_BG_OK_HOVER if is_ok else KEY_BG_HOVER
+                    draw.rectangle([(kx - 1, y - 1), (kx + key_w, y + key_h)],
+                                   fill=fill, outline=KEY_OUTLINE)
                 else:
                     if is_ok:
-                        # Standout green for confirm button
-                        draw.rectangle([(kx, y), (kx + key_w - 1, y + key_h - 1)],
-                                       fill=(20, 130, 40))
+                        fill = KEY_BG_OK
                     else:
                         is_special = (value is None)
-                        draw.rectangle([(kx, y), (kx + key_w - 1, y + key_h - 1)],
-                                       fill=(60, 60, 80) if is_special else (50, 50, 65))
+                        fill = KEY_BG_SPECIAL if is_special else KEY_BG_NORMAL
+                    draw.rectangle([(kx, y), (kx + key_w - 1, y + key_h - 1)], fill=fill)
 
                 # Key label
-                text_color = (255, 255, 255)
                 bbox = draw.textbbox((0, 0), display, font=font_small)
                 tw = bbox[2] - bbox[0]
                 th = bbox[3] - bbox[1]
                 draw.text((kx + (key_w - tw) // 2, y + (key_h - th) // 2 - 1),
-                          display, font=font_small, fill=text_color)
+                          display, font=font_small, fill=T_RGB.text_invert)
 
         # Four-corner key hints
         self._draw_corners(draw, font_small, "kb")
@@ -1243,6 +1238,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: QApplication.instance().quit())
 
     app = QApplication(sys.argv)
+    apply_app_palette(app)
     w = WifiSetupPage()
     w.showFullScreen()
 

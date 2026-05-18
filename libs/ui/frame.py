@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from ..theme import Asset, Spacing, qss
+from ..theme import Asset, Color, Spacing, qss
 from .text import HintLabel, TitleLabel
 
 
@@ -56,6 +56,10 @@ class CornerHint(QWidget):
         self._icon.hide()
 
         self._text = HintLabel("", self)
+        # 角标文字加重为主深蓝 + bold，以保证在桌面渐变背景上的对比度
+        self._text.setStyleSheet(
+            qss.text("hint", color=Color.text_primary) + "font-weight: bold;"
+        )
         self._text.hide()
 
         if corner in (CornerKey.TR, CornerKey.BR):
