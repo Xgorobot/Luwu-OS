@@ -26,14 +26,8 @@ OLD_CONFIG  = os.path.join(CONFIGS_DIR, "cm4-old.config")    # 老CM4 配置
 BOOT_CONFIG = "/boot/firmware/config.txt"
 PORT_NEW    = "/dev/ttyAMA5"   # 新CM4 机器狗串口
 PORT_OLD    = "/dev/ttyAMA0"   # 老CM4 机器狗串口
-BAUD        = 115200
 LOG_FILE    = "/tmp/luwu_hw_autoconf.log"
 SWITCH_FLAG = "/tmp/luwu_hw_autoconf_switched"  # 防循环标记
-
-# xgolib read_firmware 帧: addr=0x07, len=10
-# tx = [0x55, 0x00, 0x09, 0x02, addr, read_len, checksum, 0x00, 0xAA]
-# checksum = 255 - (0x09 + 0x02 + 0x07 + 0x0A) % 256 = 255 - 28 = 227
-PROBE_FRAME = bytes([0x55, 0x00, 0x09, 0x02, 0x07, 0x0A, 0xE3, 0x00, 0xAA])
 
 
 def log(msg: str):
@@ -57,22 +51,24 @@ def is_cm4() -> bool:
 
 
 def probe_port(port: str) -> bool:
-    """向指定串口发 xgolib 固件查询帧, 返回 True 表示有回应"""
+    """用 xgolib 读固件版本探测串口, 返回 True 表示有机器狗"""
+    log(f"probe_port({port}) called")
     try:
-        import serial
-        ser = serial.Serial(port, BAUD, timeout=0.6)
-        ser.flushInput()
-        ser.write(PROBE_FRAME)
-        time.sleep(0.6)
-        resp = ser.read(ser.in_waiting or 1)
-        ser.close()
-        log(f"{port} probe response ({len(resp)} bytes): {resp.hex() if resp else 'empty'}")
-        return len(resp) > 0
+        from xgolib import XGO
+        dog = XGO(port=port)
+        import time; time.sleep(0.3)
+        ver = dog.read_firmware()
+        log(f"{port} xgolib firmware: {ver}")
+        return ver is not None and len(str(ver)) > 0
     except PermissionError as e:
-        # 端口被占用 → 说明已有进程在用, 可视为有设备
         log(f"{port} busy (PermissionError): {e} → treat as responded")
         return True
     except Exception as e:
+        err_msg = str(e)
+        if "multiple access on port" in err_msg:
+            # 其他进程(如 undervolt)正在使用 → 设备确认存在
+            log(f"{port} multiple access detected: {err_msg} → treat as responded")
+            return True
         log(f"{port} probe error: {e}")
         return False
 
@@ -90,7 +86,13 @@ def switch_config(src: str) -> bool:
         return False
 
 
+# === 调试模式: True=只打日志不真重启, False=正常重启 ===
+DRY_RUN = True
+
 def reboot_after(sec: int = 2):
+    if DRY_RUN:
+        log(f"[DRY_RUN] Would reboot in {sec}s, but DRY_RUN=True → skipping reboot")
+        return
     log(f"Rebooting in {sec}s...")
     time.sleep(sec)
     subprocess.run(["reboot"], check=False)
@@ -121,6 +123,26 @@ def clear_switch_flag():
 
 def main():
     log("=== luwu hardware_autoconf start ===")
+    log(f"DRY_RUN={DRY_RUN}")
+
+    # 记录系统信息
+    try:
+        with open("/proc/device-tree/model", "rb") as f:
+            model = f.read().decode("utf-8", errors="replace").strip("\x00")
+        log(f"Model: {model}")
+    except Exception as e:
+        log(f"Cannot read model: {e}")
+
+    # 记录串口设备
+    for p in ["/dev/ttyAMA0", "/dev/ttyAMA1", "/dev/ttyAMA5", "/dev/ttyS0", "/dev/serial0", "/dev/serial1"]:
+        exists = os.path.exists(p)
+        extra = ""
+        if exists and os.path.islink(p):
+            extra = f" -> {os.readlink(p)}"
+        log(f"  {p}: {'EXISTS' + extra if exists else 'NOT FOUND'}")
+
+    # 记录防循环标记
+    log(f"  SWITCH_FLAG ({SWITCH_FLAG}): {'EXISTS' if os.path.exists(SWITCH_FLAG) else 'NOT FOUND'}")
 
     if not is_cm4():
         log("Not CM4 (CM5 or other), exit")
