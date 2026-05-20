@@ -59,7 +59,9 @@ def probe_port(port: str) -> bool:
         import time; time.sleep(0.3)
         ver = dog.read_firmware()
         log(f"{port} xgolib firmware: {ver}")
-        return ver is not None and len(str(ver)) > 0
+        if ver is None or ver == 'Null' or str(ver).strip() == '':
+            return False
+        return True
     except PermissionError as e:
         log(f"{port} busy (PermissionError): {e} → treat as responded")
         return True
@@ -87,7 +89,7 @@ def switch_config(src: str) -> bool:
 
 
 # === 调试模式: True=只打日志不真重启, False=正常重启 ===
-DRY_RUN = True
+DRY_RUN = False
 
 def reboot_after(sec: int = 2):
     if DRY_RUN:
