@@ -156,17 +156,22 @@ Qt App → QKeyEvent → /dev/input/eventX → gpio-keys 内核驱动 → 硬件
 ### 物理约束
 > Cypress 蓝牙芯片焊死在 GPIO 14/15。这组引脚内部只能接 PL011 或 mini-UART（二选一），无法接 RP1 的其他 UART。
 
-### 当前
+### 两种硬件版本的方案
+
+#### 新 CM4（GPIO12/13 可用）
 ```
-GPIO 14/15 ──→ mini-UART (ttyS0) ──→ 蓝牙 ← 飘，依赖 core_freq=250 锁频
-GPIO 14/15  ─→ PL011 (ttyAMA0)   ──→ 机器人 ← 稳但抢了蓝牙的好串口
+GPIO 14/15 ──→ PL011 (ttyAMA0)    ──→ 蓝牙 ✅ 内核自动管理
+GPIO 12/13 ──→ UART5 (ttyAMA5)    ──→ 机器狗 ✅ 独立 PL011，零冲突
 ```
 
-### 目标
+#### 老 CM4（机器狗焊在 GPIO14/15）
 ```
-GPIO 14/15 ──→ PL011 (ttyAMA0)    ──→ 蓝牙 ✅ 稳了
-其他 GPIO   ──→ RP1 UARTx        ──→ 机器人 ✅ 稳了
+GPIO 14/15 ──→ PL011 (ttyAMA0)    ──→ 机器狗 ✅ miniuart-bt 释放 PL011
+蓝牙芯片   ──→ mini-UART (ttyS0)  ──→ 蓝牙 ✅ krnbt=on 内核自动管理
 ```
+> 关键参数：`dtoverlay=miniuart-bt,krnbt=on`。`krnbt=on` 让内核蓝牙驱动只绑定 mini-UART，
+> 不抢占 PL011，从而让 `/dev/ttyAMA0` 可用于机器狗。`core_freq=500` + `core_freq_min=500`
+> 锁定在 CM4 原生频率，保证 mini-UART 波特率稳定且不损失性能。
 
 ### 硬件要做什么
 - 机器人下位机的 TX/RX 飞线到 RP1 空闲 UART 对应引脚
@@ -403,15 +408,20 @@ CM5 电源+电池 → vcgencmd + xgolib   → /tmp/luwu_battery_level → 多 Ap
 ### 探测原理
 向候选串口发送 xgolib 固件版本查询帧（`PROBE_FRAME`），收到任意回复视为"该串口有机器狗"；端口被占用（`PermissionError`）同样视为有设备。
 
+### 防循环保护
+当机器狗未连接时，两个串口都无回应，脚本可能在新/老配置间来回切换导致无限重启。
+防护机制：每次切换配置后写入标记文件 `/tmp/luwu_hw_autoconf_switched`，下次启动若探测仍失败且标记存在，则保持当前配置不动。标记在 `/tmp`（tmpfs），断电自动清除，不会永久锁死。
+
 ### 相关文件
 
 | 文件 | 用途 |
 |------|------|
 | `/home/pi/luwu-os/configs/hardware_autoconf.py` | 自动识别脚本（源文件，就地运行） |
-| `/home/pi/luwu-os/configs/luwu-hw-autoconf.service` | systemd 服务（`Before=luwu-launcher.service`，单次执行） |
+| `/home/pi/luwu-os/configs/luwu-hw-autoconf.service` | systemd 服务（`After=multi-user.target`，桌面启动后延迟 2 秒执行） |
 | `/home/pi/luwu-os/configs/boot-config.txt` | 新 CM4/CM5 配置模板 |
 | `/home/pi/luwu-os/configs/cm4-old.config` | 老 CM4 配置模板 |
 | `/tmp/luwu_hw_autoconf.log` | 运行日志（每次开机追加） |
+| `/tmp/luwu_hw_autoconf_switched` | 防循环标记（tmpfs，断电自动清除） |
 
 ---
 

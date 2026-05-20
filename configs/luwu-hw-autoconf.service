@@ -1,6 +1,7 @@
 [Unit]
 Description=Luwu OS Hardware Auto-Config (CM4 new/old detection)
-After=luwu-launcher.service
+After=multi-user.target
+Wants=network.target
 
 [Service]
 Type=oneshot
