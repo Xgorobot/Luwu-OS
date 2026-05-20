@@ -37,7 +37,9 @@ mark("python entry")
 # ===================== PySide6 =====================
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QKeyEvent, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QFrame
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QLabel, QVBoxLayout, QFrame,
+)
 
 # ---- luwu-os 主题层 ----
 if "/home/pi/luwu-os" not in sys.path:
@@ -48,6 +50,14 @@ from libs.theme import (  # noqa: E402
 )
 from libs.ui import AppFrame  # noqa: E402
 from libs.i18n import Translator as _Translator  # noqa: E402
+
+# 键位映射相关
+# 确保当前目录在 sys.path 中（launcher 通过 importlib 加载时工作目录可能不同）
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+from qr_page import QRMappingPage  # noqa: E402
+import mapping_server  # noqa: E402
 
 mark("PySide6 imports done")
 
@@ -70,7 +80,10 @@ _T = _Translator({
         "bt_error": "蓝牙未就绪",
         "reconnecting": "正在重连 {}...",
         "hint_exit": "退出",
-        "hint_rescan": "重新扫描",
+        "hint_rescan": "D 重新扫描",
+        "hint_mapping": "键位映射",
+        "key_mapping": "键位映射",
+        "back": "返回",
     },
     "en": {
         "title": "BT Gamepad",
@@ -89,7 +102,10 @@ _T = _Translator({
         "bt_error": "Bluetooth not ready",
         "reconnecting": "Reconnecting {}...",
         "hint_exit": "Exit",
-        "hint_rescan": "Rescan",
+        "hint_rescan": "D Rescan",
+        "hint_mapping": "Key Map",
+        "key_mapping": "Key Map",
+        "back": "Back",
     },
 })
 
@@ -740,6 +756,11 @@ class BTGamepadPage(AppFrame):
         # ---- 标题 ----
         self.setTitle(_T("title"))
 
+        # ---- QR 映射页（覆盖层，初始隐藏）----
+        self._qr_page = QRMappingPage(self)
+        self._qr_page.go_back = self._hide_qr_page
+        self._qr_page.hide()
+
         # ---- 图标 ----
         self.icon_label = QLabel(self)
         pix = QPixmap(DEMO_ICON)
@@ -793,6 +814,7 @@ class BTGamepadPage(AppFrame):
 
         # ---- 角标 ----
         self.setCornerHints(
+            tl=(_T("hint_mapping"), T_Asset.icon_left),
             bl=(_T("hint_exit"), T_Asset.icon_back),
             br=(_T("hint_rescan"), T_Asset.icon_enter),
         )
@@ -810,6 +832,10 @@ class BTGamepadPage(AppFrame):
         bottom = max(20, h * 8 // 100)
         self._center.setGeometry(0, top, w, h - top - bottom)
 
+        # QR 页面全屏覆盖
+        if self._qr_page:
+            self._qr_page.setGeometry(0, 0, w, h)
+
     def paintEvent(self, ev):
         super().paintEvent(ev)
         if not self._first_paint_logged:
@@ -825,6 +851,54 @@ class BTGamepadPage(AppFrame):
         self._bt_worker.gamepad_ready.connect(self._on_ready)
         self._bt_worker.gamepad_lost.connect(self._on_lost)
         self._bt_worker.start()
+        # 同时启动键位映射 Web 服务器
+        try:
+            mapping_server.start_server()
+        except Exception as e:
+            print(f"[bt_gamepad] mapping server start failed: {e}", flush=True)
+
+    # ---- QR 映射页面显示/隐藏 ----
+    def _show_qr_page(self):
+        """显示 QR 码映射页面"""
+        print("[bt_gamepad] showing QR mapping page", flush=True)
+        # 确保服务器在运行
+        if not mapping_server.is_running():
+            try:
+                mapping_server.start_server()
+            except Exception as e:
+                print(f"[bt_gamepad] mapping server start failed: {e}", flush=True)
+        # 重新生成 QR（IP 可能变了），捕获异常防止白屏
+        try:
+            self._qr_page._generate()
+        except Exception as e:
+            print(f"[bt_gamepad] QR generate failed: {e}", flush=True)
+        self._qr_page.show()
+        self._qr_page.raise_()
+        self._qr_page.setFocus()
+        # 隐藏主页面元素
+        self._center.hide()
+        self.icon_label.hide()
+        self.accent_line.hide()
+        self.device_label.hide()
+        self.status_label.hide()
+        self.sub_label.hide()
+        for c in self._corners.values():
+            c.hide()
+
+    def _hide_qr_page(self):
+        """隐藏 QR 码映射页面，返回主界面"""
+        print("[bt_gamepad] hiding QR mapping page", flush=True)
+        self._qr_page.hide()
+        # 恢复主页面元素
+        self._center.show()
+        self.icon_label.show()
+        self.accent_line.show()
+        self.device_label.show()
+        self.status_label.show()
+        self.sub_label.show()
+        for c in self._corners.values():
+            c.show()
+        self.setFocus()
 
     # ---- 状态更新 ----
     def _on_status(self, key: str, detail: str):
@@ -910,9 +984,23 @@ class BTGamepadPage(AppFrame):
     # ---- 按键 ----
     def keyPressEvent(self, ev: QKeyEvent):
         key = ev.key()
+        # 如果 QR 页面可见，先处理 QR 页面的返回
+        if self._qr_page.isVisible():
+            if key == Qt.Key.Key_Back:
+                print("[bt_gamepad] C -> back from QR", flush=True)
+                self._hide_qr_page()
+                return
+            # 其他按键传给 QR 页面
+            self._qr_page.keyPressEvent(ev)
+            return
+
         if key == Qt.Key.Key_Back:
             print("[bt_gamepad] C -> exit", flush=True)
             self.close()
+        elif key == Qt.Key.Key_Left:
+            # A 键 → 打开键位映射（物理左上角）
+            print("[bt_gamepad] A -> key mapping", flush=True)
+            self._show_qr_page()
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             print("[bt_gamepad] D -> rescan", flush=True)
             self._stop_controller()
@@ -932,6 +1020,11 @@ class BTGamepadPage(AppFrame):
             self._bt_worker = None
         # 停止持久 bluetoothctl 会话
         _bt.stop()
+        # 停止键位映射 Web 服务器
+        try:
+            mapping_server.stop_server()
+        except Exception:
+            pass
         super().closeEvent(ev)
 
 

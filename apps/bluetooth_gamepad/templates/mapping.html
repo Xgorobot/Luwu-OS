@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>XGO 手柄键位映射</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", sans-serif;
+    background: #f0f4f8; color: #1a3a6e; min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a3a6e, #3a8dff);
+    color: #fff; padding: 16px 20px; text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    position: sticky; top:0; z-index:10;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header p { font-size: 12px; opacity: 0.85; margin-top: 4px; }
+
+  /* 设备选择标签 */
+  .tabs {
+    display: flex; background: #fff; margin: 12px 12px 0;
+    border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .tabs button {
+    flex:1; border:none; background:#fff; padding: 12px 8px;
+    font-size: 13px; font-weight: 500; color: #5d7299;
+    cursor: pointer; transition: all 0.2s;
+    border-bottom: 3px solid transparent;
+  }
+  .tabs button.active {
+    color: #3a8dff; border-bottom-color: #3a8dff; font-weight: 700;
+  }
+
+  .container { padding: 12px; max-width: 600px; margin: 0 auto; }
+
+  /* 分组标题 */
+  .section-title {
+    font-size: 14px; font-weight: 700; color: #1a3a6e;
+    margin: 16px 0 8px; padding-left: 4px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .section-title::before {
+    content:''; width:4px; height:16px; background:#3a8dff;
+    border-radius: 2px; display: inline-block;
+  }
+
+  /* 映射行 */
+  .mapping-row {
+    display: flex; align-items: center; background: #fff;
+    margin-bottom: 6px; padding: 10px 12px; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    gap: 10px;
+  }
+  .btn-name {
+    flex: 0 0 120px; font-size: 13px; font-weight: 500; color: #1a3a6e;
+    white-space: nowrap;
+  }
+  .btn-index {
+    font-size: 10px; color: #8aa1c7; margin-left: 2px;
+  }
+  .mapping-row select {
+    flex:1; padding: 8px 10px; border: 1px solid #dde4f0;
+    border-radius: 6px; font-size: 13px; color: #1a3a6e;
+    background: #f8fafc; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%235d7299' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 30px;
+  }
+  .mapping-row select:focus {
+    outline: none; border-color: #3a8dff; box-shadow: 0 0 0 2px rgba(58,141,255,0.15);
+  }
+  .mapping-row .axis-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    background: #e8f0fe; color: #3a8dff; font-weight: 500;
+  }
+  .mapping-row .btn-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    background: #fef3e2; color: #e69900; font-weight: 500;
+  }
+
+  /* 操作按钮 */
+  .actions {
+    display: flex; gap: 10px; margin: 20px 0 40px;
+    position: sticky; bottom: 12px;
+  }
+  .btn-save {
+    flex:1; padding: 14px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #3a8dff, #1a3a6e);
+    color: #fff; font-size: 15px; font-weight: 600;
+    cursor: pointer; box-shadow: 0 4px 12px rgba(58,141,255,0.3);
+    transition: transform 0.15s, opacity 0.15s;
+  }
+  .btn-save:active { transform: scale(0.97); }
+  .btn-save:disabled { opacity: 0.5; pointer-events: none; }
+  .btn-reset {
+    padding: 14px 20px; border: 1px solid #dde4f0; border-radius: 10px;
+    background: #fff; color: #5d7299; font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: #18a957; color: #fff; padding: 10px 24px; border-radius: 20px;
+    font-size: 14px; font-weight: 500; z-index: 999;
+    box-shadow: 0 4px 12px rgba(24,169,87,0.3);
+    animation: toastIn 0.3s ease;
+    pointer-events: none;
+  }
+  .toast.error { background: #d6453d; box-shadow: 0 4px 12px rgba(214,69,61,0.3); }
+  @keyframes toastIn { from { opacity:0; transform:translate(-50%,-10px); } to { opacity:1; transform:translate(-50%,0); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🎮 XGO 手柄键位映射</h1>
+  <p>选择设备类型，配置按键与动作的对应关系</p>
+</div>
+
+<!-- 设备选择 -->
+<div class="tabs" id="deviceTabs"></div>
+
+<div class="container" id="content"></div>
+
+<!-- 操作按钮 -->
+<div class="container">
+  <div class="actions">
+    <button class="btn-reset" onclick="loadMappings()">🔄 重新加载</button>
+    <button class="btn-save" id="btnSave" onclick="saveMappings()">💾 保存配置</button>
+  </div>
+</div>
+
+<script>
+// ── 全局状态 ──
+let currentDevice = 'xgomini';
+let currentMapping = {};
+let buttonNames = {};
+let axisNames = {};
+let oneShotActions = [];
+let holdActions = [];
+let axisActions = [];
+let actionNames = {};   // {1: "趴下", 2: "站起", ...}
+let devices = [];
+
+// ── 初始化 ──
+async function init() {
+  try {
+    const resp = await fetch('/api/info');
+    const data = await resp.json();
+    buttonNames = data.buttons || {};
+    axisNames = data.axes || {};
+    devices = data.devices || ['xgomini', 'xgolite', 'xgorider'];
+    // available 现在是按设备分组的: { xgomini: {one_shot:[], hold:[], axis:[], action_names:{}}, ... }
+    // 先加载当前设备的
+    const devAvail = (data.available && data.available[currentDevice]) || {};
+    oneShotActions = devAvail.one_shot || [];
+    holdActions = devAvail.hold || [];
+    axisActions = devAvail.axis || [];
+    actionNames = devAvail.action_names || {};
+
+    renderDeviceTabs();
+    loadMappings();
+  } catch (e) {
+    showToast('加载配置失败: ' + e.message, true);
+  }
+}
+
+// ── 设备标签 ──
+function renderDeviceTabs() {
+  const tabs = document.getElementById('deviceTabs');
+  const names = { xgomini:'XGO-MINI', xgolite:'XGO-LITE', xgorider:'XGO-RIDER' };
+  tabs.innerHTML = devices.map(d =>
+    `<button class="${d === currentDevice ? 'active' : ''}" onclick="switchDevice('${d}')">${names[d] || d}</button>`
+  ).join('');
+}
+
+function switchDevice(device) {
+  currentDevice = device;
+  document.querySelectorAll('.tabs button').forEach((btn, i) => {
+    btn.classList.toggle('active', devices[i] === device);
+  });
+  loadMappings();
+}
+
+// ── 加载映射 ──
+async function loadMappings() {
+  try {
+    const resp = await fetch(`/api/mappings?device=${currentDevice}`);
+    const data = await resp.json();
+    currentMapping = data.mapping || {};
+    // 更新可用动作（API 返回设备专属列表）
+    if (data.available) {
+      oneShotActions = data.available.one_shot || oneShotActions;
+      holdActions = data.available.hold || holdActions;
+      axisActions = data.available.axis || axisActions;
+      actionNames = data.available.action_names || actionNames;
+    }
+    if (data.buttons) buttonNames = data.buttons;
+    if (data.axes) axisNames = data.axes;
+    renderMapping();
+  } catch (e) {
+    showToast('加载映射失败: ' + e.message, true);
+  }
+}
+
+// ── 渲染映射表 ──
+function renderMapping() {
+  const container = document.getElementById('content');
+  let html = '';
+
+  // 按钮映射
+  html += '<div class="section-title">🎯 按键映射</div>';
+  for (let i = 0; i <= 15; i++) {
+    const key = `button_${i}`;
+    const value = currentMapping[key] || 'none';
+    const name = buttonNames[i] || `按钮 ${i}`;
+    html += `
+      <div class="mapping-row">
+        <span class="btn-name">${name} <span class="btn-index">[${i}]</span></span>
+        ${renderSelect(key, value, 'button')}
+      </div>`;
+  }
+
+  // 轴映射
+  html += '<div class="section-title">🕹️ 摇杆/轴映射</div>';
+  for (let i = 0; i <= 5; i++) {
+    const key = `axis_${i}`;
+    const value = currentMapping[key] || 'none';
+    const name = axisNames[i] || `轴 ${i}`;
+    html += `
+      <div class="mapping-row">
+        <span class="btn-name">${name} <span class="axis-badge">轴</span></span>
+        ${renderSelect(key, value, 'axis')}
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// ── 下拉选择框 ──
+function renderSelect(key, currentValue, type) {
+  let actions;
+  if (type === 'axis') {
+    actions = axisActions;
+  } else {
+    // 按钮可以选所有动作（one_shot + hold）
+    actions = [...oneShotActions];
+    // 添加 hold 动作（去重）
+    for (const a of holdActions) {
+      if (!actions.includes(a)) actions.push(a);
+    }
+  }
+
+  // 过滤掉"none"放到最前面
+  const filtered = actions.filter(a => a !== 'none');
+  const options = ['<option value="none">-- 无 --</option>'];
+  for (const a of filtered) {
+    const selected = a === currentValue ? ' selected' : '';
+    // action_X 显示中文名
+    let label = a;
+    const m = a.match(/^action_(\d+)$/);
+    if (m && actionNames[m[1]]) {
+      label = `${a} (${actionNames[m[1]]})`;
+    }
+    options.push(`<option value="${a}"${selected}>${label}</option>`);
+  }
+
+  return `<select data-key="${key}" onchange="onMappingChange(this)">${options.join('')}</select>`;
+}
+
+// ── 映射变更 ──
+function onMappingChange(select) {
+  const key = select.dataset.key;
+  const value = select.value;
+  currentMapping[key] = value;
+}
+
+// ── 保存 ──
+async function saveMappings() {
+  const btn = document.getElementById('btnSave');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+
+  try {
+    const resp = await fetch('/api/mappings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device: currentDevice,
+        mapping: currentMapping,
+      }),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      showToast(`✅ ${currentDevice} 映射已保存！手柄将自动重载`);
+    } else {
+      showToast('保存失败', true);
+    }
+  } catch (e) {
+    showToast('保存失败: ' + e.message, true);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '💾 保存配置';
+}
+
+// ── Toast ──
+function showToast(msg, isError) {
+  const old = document.querySelector('.toast');
+  if (old) old.remove();
+  const toast = document.createElement('div');
+  toast.className = 'toast' + (isError ? ' error' : '');
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+// ── 启动 ──
+init();
+</script>
+</body>
+</html>

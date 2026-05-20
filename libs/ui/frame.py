@@ -4,6 +4,7 @@
 - launcher 同款浅色背景图
 - 4 角图标 + 文字提示（与 launcher 角标布局一致）
 - 顶部居中标题位
+- 鼠标光标自动显隐（有鼠标连接时显示，否则隐藏）
 
 例::
 
@@ -18,12 +19,26 @@
                 br=("确认",   Asset.icon_enter),
             )
 """
-from PySide6.QtCore import Qt
+import os
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from ..theme import Asset, Color, Spacing, qss
 from .text import HintLabel, TitleLabel
+
+
+def _is_mouse_connected() -> bool:
+    """检测 /proc/bus/input/devices 中是否存在鼠标设备。"""
+    try:
+        with open('/proc/bus/input/devices', 'r') as f:
+            content = f.read().lower()
+            if 'mouse' in content:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 class CornerKey:
@@ -118,6 +133,13 @@ class AppFrame(QWidget):
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.hide()
 
+        # 鼠标光标管理：初始隐藏，定时检测鼠标连接后恢复
+        self._cursor_hidden = True
+        self.setCursor(Qt.CursorShape.BlankCursor)
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.timeout.connect(self._update_cursor)
+        self._cursor_timer.start(3000)
+
     # ------------------------------------------------------------------ public
     def setTitle(self, text: str) -> None:
         self._title.setText(text)
@@ -184,3 +206,13 @@ class AppFrame(QWidget):
             self._title.adjustSize()
             self._title.move((w - self._title.width()) // 2, max(2, Spacing.md // 2))
             self._title.raise_()
+
+    def _update_cursor(self) -> None:
+        """定时检测鼠标连接状态，自动显隐光标。"""
+        has_mouse = _is_mouse_connected()
+        if has_mouse and self._cursor_hidden:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._cursor_hidden = False
+        elif not has_mouse and not self._cursor_hidden:
+            self.setCursor(Qt.CursorShape.BlankCursor)
+            self._cursor_hidden = True

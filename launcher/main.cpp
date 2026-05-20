@@ -15,12 +15,24 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QFont>
+#include <QCursor>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "keyfilter.h"
 #include "galleryview.h"
 #include "demogridview.h"
 #include "statusbar.h"
+
+// 检测是否有鼠标连接
+static bool isMouseConnected() {
+    QFile f("/proc/bus/input/devices");
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QString content = f.readAll().toLower();
+        f.close();
+        return content.contains("mouse");
+    }
+    return false;
+}
 
 // ========================================================================
 // 配置常量
@@ -237,6 +249,22 @@ int main(int argc, char *argv[]) {
 
     stack.showFullScreen();
     gallery->setFocus();
+
+    // --- 光标管理：没有鼠标时自动隐藏光标，连接后恢复 ---
+    bool cursorHidden = true;
+    stack.setCursor(Qt::BlankCursor);
+    QTimer *cursorTimer = new QTimer(&stack);
+    QObject::connect(cursorTimer, &QTimer::timeout, [&stack, &cursorHidden]() {
+        bool hasMouse = isMouseConnected();
+        if (hasMouse && cursorHidden) {
+            stack.setCursor(Qt::ArrowCursor);
+            cursorHidden = false;
+        } else if (!hasMouse && !cursorHidden) {
+            stack.setCursor(Qt::BlankCursor);
+            cursorHidden = true;
+        }
+    });
+    cursorTimer->start(3000);
 
     // --- 设备型号探测：异步调 Python 脚本，不阻塞启动 ---
     // 脚本 stdout 输出一行：xgomini / xgolite / xgomini2sw / xgorider / unknown

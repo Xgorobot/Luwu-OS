@@ -34,30 +34,48 @@ CONFIG_FILE = os.path.join(ROOT, "mappings.json")
 # ── 手柄识别 ──────────────────────────────────────────────────────
 GAMEPAD_KEYWORDS = ["xbox", "microsoft", "wireless controller", "controller", "tl_", "8bitdo", "ipega", "gamepad"]
 
-# evdev 按键码 → 按钮索引（同 app.py 定义）
+# evdev 按键码 → 按钮索引
+# 支持 PS4 DualShock4 / Xbox / 通用手柄（多种 code 映射同一 index）
 BUTTON_MAP = {
-    304: 0,   # A
-    305: 1,   # B
-    306: 2,   # X
-    307: 3,   # Y
-    308: 4,   # LB
-    309: 5,   # RB
-    # index 6=LT / 7=RT：本控制器为纯模拟轴（ABS 2/5），无数字按键事件
-    310: 8,   # Back
-    311: 9,   # Start
-    312: 10,  # L3
-    313: 11,  # R3
-    139: 16,  # Home (Xbox键)
+    # A / × (Cross)
+    304: 0,   # BTN_SOUTH
+    # B / ○ (Circle)
+    305: 1,   # BTN_EAST
+    # X / □ (Square)
+    308: 2,   # BTN_WEST  (PS4 □)
+    306: 2,   # BTN_C     (部分 Xbox 兼容)
+    # Y / △ (Triangle)
+    307: 3,   # BTN_NORTH
+    # LB / L1
+    310: 4,   # BTN_TL
+    # RB / R1
+    311: 5,   # BTN_TR
+    # LT / L2（数字按键事件，部分手柄有）
+    312: 6,   # BTN_TL2
+    # RT / R2
+    313: 7,   # BTN_TR2
+    # Back / Share
+    314: 8,   # BTN_SELECT
+    # Start / Options
+    315: 9,   # BTN_START
+    # L3
+    317: 10,  # BTN_THUMBL
+    # R3
+    318: 11,  # BTN_THUMBR
+    # Home / PS
+    316: 16,  # BTN_MODE
+    139: 16,  # Home (旧键盘兼容)
 }
 # evdev ABS 码 → 轴索引
 AXIS_MAP = {0: 0, 1: 1, 3: 2, 4: 3, 2: 4, 5: 5}
 
 # ── 功能分类 ──────────────────────────────────────────────────────
 # 按下立刻执行一次（不需要松开）
+# action_X 动态匹配：action_1 ~ action_24, action_128~130, action_144, action_255
+_ACTION_IDS = list(range(1, 25)) + [128, 129, 130, 144, 255]
 ONE_SHOT = {
     "stop",
-    "action_1", "action_2", "action_3", "action_4", "action_5",
-    "action_6", "action_7", "action_8", "action_9", "action_255",
+    *(f"action_{i}" for i in _ACTION_IDS),
     "rider_balance_on", "rider_balance_off",
     "rider_perform_on", "rider_perform_off",
     "rider_height_up", "rider_height_down",
