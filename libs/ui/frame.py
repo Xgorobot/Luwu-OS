@@ -22,22 +22,63 @@
 import os
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QPainter, QPixmap, QCursor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from ..theme import Asset, Color, Spacing, qss
 from .text import HintLabel, TitleLabel
 
 
+# 手柄/游戏控制器的触摸板会被系统识别为鼠标(mouse)，
+# 但手柄 App 场景下不需要显示光标，这里把它们排除掉。
+_GAMEPAD_TOUCHPAD_KEYWORDS = [
+    "wireless controller", "gamepad", "controller",
+    "dualsense", "dualshock", "8bitdo", "joy-con",
+    "pro controller", "xbox", "joystick",
+]
+
+# 用透明像素图创建不可见光标，避免 BlankCursor 在树莓派 X11 驱动下显示为黑块
+_invisible_cursor_cache = None
+
+
+def _invisible_cursor() -> QCursor:
+    """返回一个真正透明的光标（1x1 全透明像素图）。"""
+    global _invisible_cursor_cache
+    if _invisible_cursor_cache is None:
+        pix = QPixmap(1, 1)
+        pix.fill(Qt.GlobalColor.transparent)
+        _invisible_cursor_cache = QCursor(pix)
+    return _invisible_cursor_cache
+
+
 def _is_mouse_connected() -> bool:
-    """检测 /proc/bus/input/devices 中是否存在鼠标设备。"""
+    """检测 /proc/bus/input/devices 中是否存在「真正的」鼠标设备。
+
+    手柄的触摸板（如 PS4/PS5/Xbox）虽然 Handlers 里包含 mouse，
+    但其 Name 包含游戏控制器关键词，这类设备会被过滤掉。
+    """
     try:
         with open('/proc/bus/input/devices', 'r') as f:
-            content = f.read().lower()
-            if 'mouse' in content:
-                return True
+            content = f.read()
     except Exception:
-        pass
+        return False
+
+    # 按设备块（空行分隔）逐个检查
+    blocks = content.strip().split('\n\n')
+    for block in blocks:
+        lower = block.lower()
+        if 'mouse' not in lower:
+            continue
+        # 提取设备名称
+        name = ''
+        for line in block.splitlines():
+            if line.startswith('N: Name='):
+                name = line.split('=', 1)[1].strip('"').lower()
+                break
+        # 如果是手柄触摸板，跳过
+        if name and any(kw in name for kw in _GAMEPAD_TOUCHPAD_KEYWORDS):
+            continue
+        return True
     return False
 
 
@@ -135,7 +176,7 @@ class AppFrame(QWidget):
 
         # 鼠标光标管理：初始隐藏，定时检测鼠标连接后恢复
         self._cursor_hidden = True
-        self.setCursor(Qt.CursorShape.BlankCursor)
+        self.setCursor(_invisible_cursor())
         self._cursor_timer = QTimer(self)
         self._cursor_timer.timeout.connect(self._update_cursor)
         self._cursor_timer.start(3000)
@@ -214,5 +255,5 @@ class AppFrame(QWidget):
             self.setCursor(Qt.CursorShape.ArrowCursor)
             self._cursor_hidden = False
         elif not has_mouse and not self._cursor_hidden:
-            self.setCursor(Qt.CursorShape.BlankCursor)
+            self.setCursor(_invisible_cursor())
             self._cursor_hidden = True

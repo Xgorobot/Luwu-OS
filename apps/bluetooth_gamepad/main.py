@@ -49,6 +49,7 @@ from libs.theme import (  # noqa: E402
     Spacing, qss as T_qss,
 )
 from libs.ui import AppFrame  # noqa: E402
+from libs.ui.frame import _invisible_cursor  # noqa: E402
 from libs.i18n import Translator as _Translator  # noqa: E402
 
 # 键位映射相关
@@ -82,6 +83,7 @@ _T = _Translator({
         "hint_exit": "退出",
         "hint_rescan": "D 重新扫描",
         "hint_mapping": "键位映射",
+        "hint_disconnect": "断开",
         "key_mapping": "键位映射",
         "back": "返回",
     },
@@ -104,6 +106,7 @@ _T = _Translator({
         "hint_exit": "Exit",
         "hint_rescan": "D Rescan",
         "hint_mapping": "Key Map",
+        "hint_disconnect": "Disc",
         "key_mapping": "Key Map",
         "back": "Back",
     },
@@ -350,6 +353,13 @@ class BtSession:
     def trust(self, mac: str):
         return self._send(f"trust {mac}", 5)
 
+    def disconnect(self, mac: str, timeout=10):
+        """断开指定设备，忽略设备不存在等错误"""
+        return self._send(f"disconnect {mac}", timeout,
+                          wait_for=["successful", "disconnected",
+                                    "not connected", "not available",
+                                    "failed", "device"])
+
     def connect(self, mac: str, timeout=20):
         # 频率限制：同一设备两次 connect 之间至少间隔 _connect_min_interval 秒
         now = time.time()
@@ -439,6 +449,13 @@ def bt_connect(mac: str) -> bool:
     # "host is down" / "operation already" 表示暂时失败，下次可重试
     return "successful" in clean or "already" in clean
 
+def bt_disconnect(mac: str):
+    """断开蓝牙设备连接"""
+    out = _bt.disconnect(mac)
+    clean = _ANSI_RE.sub('', out).lower()
+    _bt_log(f"bt_disconnect({mac}) result: {clean[:200]}")
+    return out
+
 def bt_scan(duration: int = SCAN_DURATION):
     _bt.scan(duration)
 
@@ -471,12 +488,18 @@ class BTWorker(QThread):
         super().__init__()
         self._running = True
         self._force_rescan = False
+        self._force_disconnect = False
+        self._current_mac = ""     # 当前连接的手柄 MAC，用于主动断开
 
     def stop(self):
         self._running = False
 
     def request_rescan(self):
         self._force_rescan = True
+
+    def request_disconnect(self):
+        """主动断开当前连接的手柄"""
+        self._force_disconnect = True
 
     # ---- 主流程 ----
     def run(self):
@@ -506,14 +529,16 @@ class BTWorker(QThread):
                 continue
 
             # 2.2 尝试直接连接已知已配对但未连接的手柄（无需扫描）
-            mac, name = self._find_paired_disconnected()
-            if mac:
-                _bt_log(f"Found paired-but-disconnected gamepad: {name} ({mac}), trying connect")
-                self.status_changed.emit("connecting", name)
-                if self._try_connect_paired(mac, name):
-                    self._monitor(mac, name)
-                    continue
-                _bt_log(f"Direct connect to {name} failed, falling through to scan")
+            # 但如果用户主动触发了重扫/断开，跳过直连，直接进入扫描流程
+            if not self._force_rescan:
+                mac, name = self._find_paired_disconnected()
+                if mac:
+                    _bt_log(f"Found paired-but-disconnected gamepad: {name} ({mac}), trying connect")
+                    self.status_changed.emit("connecting", name)
+                    if self._try_connect_paired(mac, name):
+                        self._monitor(mac, name)
+                        continue
+                    _bt_log(f"Direct connect to {name} failed, falling through to scan")
 
             # 2.3 扫描 + 配对 + 连接
             ok = self._scan_and_connect()
@@ -670,10 +695,22 @@ class BTWorker(QThread):
         return False
 
     def _monitor(self, mac: str, name: str):
-        """连接成功后监控掉线，掉线时尝试快速重连"""
+        """连接成功后监控掉线，掉线时尝试快速重连。同时响应断开/重扫请求。"""
+        self._current_mac = mac
         disconnect_count = 0
         while self._running and not self._force_rescan:
             time.sleep(3)
+            
+            # 主动断开：先通过 bluetoothctl 断开蓝牙
+            if self._force_disconnect:
+                _bt_log(f"monitor: user requested disconnect for {name} ({mac})")
+                print(f"[bt_gamepad] user requested disconnect {name}", flush=True)
+                bt_disconnect(mac)
+                self._current_mac = ""
+                self.status_changed.emit("disconnected", name)
+                self.gamepad_lost.emit()
+                break
+            
             if not bt_is_connected(mac):
                 disconnect_count += 1
                 _bt_log(f"monitor: {name} disconnected (count={disconnect_count})")
@@ -700,10 +737,22 @@ class BTWorker(QThread):
                         continue
                 
                 # 多次掉线 → 通知上层重启扫描
+                self._current_mac = ""
                 self.status_changed.emit("disconnected", name)
                 self.gamepad_lost.emit()
                 time.sleep(2)
                 return
+
+        # 如果是 force_rescan 触发的退出，也断开当前设备
+        if self._current_mac and self._force_rescan:
+            _bt_log(f"monitor: rescan requested, disconnecting {name} ({mac})")
+            bt_disconnect(mac)
+        
+        self._current_mac = ""
+        # 重置标志，让主循环进入扫描流程
+        if self._force_disconnect:
+            self._force_disconnect = False
+            self._force_rescan = True  # 断开后自动开始扫描
 
 
 # ===================== 控制器线程 =====================
@@ -749,6 +798,12 @@ class BTGamepadPage(AppFrame):
             self.update()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._first_paint_logged = False
+
+        # 手柄触摸板会被系统识别为鼠标，导致光标显示，
+        # 这里强制隐藏光标（手柄 App 不需要鼠标光标）
+        self._cursor_timer.stop()
+        self._cursor_hidden = True
+        self.setCursor(_invisible_cursor())
 
         self._bt_worker: BTWorker | None = None
         self._ctrl_thread: ControllerThread | None = None
@@ -815,6 +870,7 @@ class BTGamepadPage(AppFrame):
         # ---- 角标 ----
         self.setCornerHints(
             tl=(_T("hint_mapping"), T_Asset.icon_left),
+            tr=(_T("hint_disconnect"), T_Asset.icon_right),
             bl=(_T("hint_exit"), T_Asset.icon_back),
             br=(_T("hint_rescan"), T_Asset.icon_enter),
         )
@@ -1001,6 +1057,10 @@ class BTGamepadPage(AppFrame):
             # A 键 → 打开键位映射（物理左上角）
             print("[bt_gamepad] A -> key mapping", flush=True)
             self._show_qr_page()
+        elif key == Qt.Key.Key_Right:
+            # B 键 → 断开当前蓝牙手柄（物理右上角）
+            print("[bt_gamepad] B -> disconnect", flush=True)
+            self._disconnect_gamepad()
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             print("[bt_gamepad] D -> rescan", flush=True)
             self._stop_controller()
@@ -1008,6 +1068,17 @@ class BTGamepadPage(AppFrame):
                 self._bt_worker.request_rescan()
             else:
                 self._start_bt()
+
+    # ---- 主动断开手柄 ----
+    def _disconnect_gamepad(self):
+        """主动断开当前连接的手柄，停止控制器并自动开始扫描"""
+        print("[bt_gamepad] disconnecting current gamepad...", flush=True)
+        self._stop_controller()
+        if self._bt_worker and self._bt_worker._current_mac:
+            self._bt_worker.request_disconnect()
+            self.sub_label.setText("")
+            self.status_label.setText(_T("disconnected"))
+            self.status_label.setStyleSheet(T_qss.chip("muted"))
 
     # ---- 退出清理 ----
     def closeEvent(self, ev):
