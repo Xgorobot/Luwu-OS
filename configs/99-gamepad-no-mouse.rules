@@ -1,0 +1,105 @@
+# ============================================================================
+# luwu-os: 禁止蓝牙手柄触摸板/运动传感器被识别为鼠标
+# ----------------------------------------------------------------------------
+# 部分蓝牙手柄（PS4/PS5/部分 Xbox 一体机/8bitdo Pro 2 等）会上报触摸板和
+# 运动传感器子设备，Linux 默认会把它们当成 mouse(指针设备) 处理，导致：
+#   1. 屏幕上出现鼠标光标
+#   2. Qt.BlankCursor 在树莓派 X11 驱动下渲染成黑块
+#   3. 触摸板划动会让光标乱飞
+#
+# 这里通过两个标签让上层（libinput / Qt evdev plugin / X11）忽略这些设备：
+#   - ID_INPUT_MOUSE=""        让 X11/Qt 不再认它是鼠标
+#   - ID_INPUT_TOUCHPAD=""     让 X11/Qt 不再认它是触摸板
+#   - LIBINPUT_IGNORE_DEVICE=1 libinput 完全忽略
+#
+# 安装路径：/etc/udev/rules.d/99-gamepad-no-mouse.rules
+# 安装命令：
+#   sudo cp 99-gamepad-no-mouse.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+# ============================================================================
+
+# ── 通过设备名匹配（最通用，覆盖各品牌手柄触摸板/运动传感器）───────────────
+# Sony PS4 DualShock 4
+SUBSYSTEM=="input", ATTRS{name}=="Wireless Controller Touchpad", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", ATTRS{name}=="Wireless Controller Motion Sensors", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# Sony PS5 DualSense
+SUBSYSTEM=="input", ATTRS{name}=="DualSense Wireless Controller Touchpad", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", ATTRS{name}=="DualSense Wireless Controller Motion Sensors", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# Sony PS5 DualSense Edge
+SUBSYSTEM=="input", ATTRS{name}=="DualSense Edge Wireless Controller Touchpad", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", ATTRS{name}=="DualSense Edge Wireless Controller Motion Sensors", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# Sony PS3 SIXAXIS / DualShock 3 (Motion Sensor)
+SUBSYSTEM=="input", ATTRS{name}=="Sony PLAYSTATION(R)3 Controller Motion Sensors", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# Nintendo Switch Pro Controller / Joy-Con (IMU)
+SUBSYSTEM=="input", ATTRS{name}=="Nintendo Switch Pro Controller IMU", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", ATTRS{name}=="Joy-Con (L) IMU", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", ATTRS{name}=="Joy-Con (R) IMU", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_ACCELEROMETER}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# 8bitdo Pro 2 / SN30 Pro+ 等触摸板/运动传感器
+SUBSYSTEM=="input", ATTRS{name}=="8BitDo Pro 2 Touchpad", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# ── 通用兜底：任何名字以「* Touchpad」结尾且来自蓝牙的设备都认为是手柄触摸板
+# 注意：udev 的 ATTRS 不支持通配符，需要用 ENV 在 driver 层兜底，
+# 这里改用 hid 驱动名匹配（hid-sony / hid-playstation / hid-nintendo / hid-microsoft / hid-bitdo）
+# ----------------------------------------------------------------------------
+
+# Sony 系列（PS3/PS4/PS5）—— hid-playstation 或 hid-sony 驱动
+SUBSYSTEM=="input", DRIVERS=="playstation", \
+    ATTRS{name}=="*Touchpad*", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+SUBSYSTEM=="input", DRIVERS=="sony", \
+    ATTRS{name}=="*Touchpad*", \
+    ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", \
+    ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# ── VID/PID 兜底（防止驱动差异导致名称匹配失败）──────────────────────────
+# Sony PS4 DualShock 4 V1 / V2 / USB Wireless Adaptor
+SUBSYSTEM=="input", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="05c4", \
+    ENV{ID_INPUT_MOUSE}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+SUBSYSTEM=="input", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="09cc", \
+    ENV{ID_INPUT_MOUSE}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+SUBSYSTEM=="input", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ba0", \
+    ENV{ID_INPUT_MOUSE}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+# Sony PS5 DualSense / Edge
+SUBSYSTEM=="input", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ce6", \
+    ENV{ID_INPUT_MOUSE}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+SUBSYSTEM=="input", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0df2", \
+    ENV{ID_INPUT_MOUSE}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+
+# 注意：以上 VID/PID 规则是对整个手柄 input device 生效，
+# 但是手柄主输入（按键/摇杆）由 evdev 直接读取 /dev/input/eventX，
+# 不依赖 ID_INPUT_MOUSE 标签，所以不会影响 luwu-os 的手柄控制。

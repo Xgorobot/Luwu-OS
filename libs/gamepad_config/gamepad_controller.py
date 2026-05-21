@@ -87,12 +87,17 @@ ONE_SHOT = {
     "height_up", "height_down",
     "arm_forward", "arm_back",
     "rumble_short", "rumble_long", "rumble_pulse",
+    "play_ball",
+    "crossing_toggle",
+    "step_up", "step_down",
+    "pace_up", "pace_down",
 }
 
 # 持续按住时保持运动，松开归零
 HOLD = {
     "rider_forward", "rider_back", "rider_turn_left", "rider_turn_right",
     "forward", "back", "left", "right", "turn_left", "turn_right",
+    "roll_left", "roll_right",
 }
 
 # 轴映射（持续发送）
@@ -110,6 +115,11 @@ class XGOController:
         self._held = set()        # 当前持续按住的按钮索引集合
         self._axes = {}           # {轴索引: 值}
         self._height = 90         # 当前车身高度（用于增减控制）
+        self._step_control = 70   # 步幅 (40/70/100 循环)
+        self._pace_freq = 2       # 步频 (1=慢/2=中/3=快)
+        self._crossing_state = False  # 跨障模式标志
+        self._play_ball = 0       # play_ball 序列中断标志 (0=空闲)
+        self._roll_dir = 0        # roll 方向 (-1=左, 0=无, 1=右)
         self._running = False
         self._config_mtime = 0    # 配置文件最后修改时间
         self._gamepad_dev = None  # 当前手柄设备（用于震动）
@@ -388,6 +398,99 @@ class XGOController:
             except (IndexError, ValueError):
                 pass
 
+        # ── play_ball 玩球序列（仅 dog 机型） ──
+        elif func_id == "play_ball":
+            if self._crossing_state or self._play_ball != 0:
+                return
+            if is_rider:
+                if xgo: xgo.rider_action(5)
+            else:
+                self._play_ball = 2
+                t = threading.Thread(
+                    target=self._play_ball_task,
+                    args=(self._play_ball,),
+                    daemon=True, name="play-ball"
+                )
+                t.start()
+            log.info("play_ball")
+
+        # ── crossing_toggle 跨障模式切换 ──
+        elif func_id == "crossing_toggle":
+            if is_rider:
+                # Rider: 切换横滚平衡模式
+                if not self._crossing_state:
+                    self._crossing_state = True
+                    if xgo: xgo.rider_balance_roll(1)
+                    log.info("横滚平衡 ON (Rider 跨障)")
+                else:
+                    self._crossing_state = False
+                    if xgo: xgo.rider_balance_roll(0)
+                    log.info("横滚平衡 OFF")
+            else:
+                # Dog: 跨障模式
+                if not self._crossing_state:
+                    self._crossing_state = True
+                    if xgo:
+                        xgo.gait_type("high_walk")
+                        time.sleep(0.01)
+                        xgo.pace("slow")
+                        time.sleep(0.01)
+                        xgo.translation("z", 95)
+                        time.sleep(0.01)
+                        xgo.forward(25)
+                    log.info("跨障模式 ON")
+                else:
+                    self._reset_state()
+                    log.info("跨障模式 OFF")
+
+        # ── 步幅调节 ──
+        elif func_id == "step_up":
+            self._step_control += 30
+            if self._step_control > 100:
+                self._step_control = 40
+            log.info(f"步幅 → {self._step_control}")
+        elif func_id == "step_down":
+            self._step_control -= 30
+            if self._step_control < 40:
+                self._step_control = 100
+            log.info(f"步幅 → {self._step_control}")
+
+        # ── 步频调节 ──
+        elif func_id == "pace_up":
+            self._pace_freq += 1
+            if self._pace_freq > 3:
+                self._pace_freq = 1
+            pace_map = {1: "slow", 2: "normal", 3: "high"}
+            if xgo:
+                if is_rider:
+                    pass  # Rider 无 pace 概念，仅记录
+                else:
+                    xgo.pace(pace_map.get(self._pace_freq, "normal"))
+            log.info(f"步频 → {self._pace_freq}")
+        elif func_id == "pace_down":
+            self._pace_freq -= 1
+            if self._pace_freq < 1:
+                self._pace_freq = 3
+            pace_map = {1: "slow", 2: "normal", 3: "high"}
+            if xgo:
+                if not is_rider:
+                    xgo.pace(pace_map.get(self._pace_freq, "normal"))
+            log.info(f"步频 → {self._pace_freq}")
+
+        # ── roll 姿态（持续按住） ──
+        elif func_id == "roll_left":
+            self._roll_dir = -1
+            if xgo:
+                if is_rider: xgo.rider_roll(-15)
+                else: xgo.attitude("y", -35)
+            log.info("roll left")
+        elif func_id == "roll_right":
+            self._roll_dir = 1
+            if xgo:
+                if is_rider: xgo.rider_roll(15)
+                else: xgo.attitude("y", 35)
+            log.info("roll right")
+
         else:
             log.debug(f"未知功能 ID: {func_id}")
 
@@ -398,6 +501,73 @@ class XGOController:
                 self.xgo.stop()
             except Exception:
                 pass
+        # 复位 roll 姿态
+        if self._roll_dir != 0:
+            self._roll_dir = 0
+            if self.xgo:
+                try:
+                    if self.device_type == "xgorider":
+                        self.xgo.rider_roll(0)
+                    else:
+                        self.xgo.attitude("r", 0)
+                        self.xgo.attitude("y", 0)
+                except Exception:
+                    pass
+
+    def _reset_state(self):
+        """复位机器狗状态（跨障退出 / START 复位）"""
+        self._play_ball = 0
+        self._crossing_state = False
+        self._step_control = 70
+        self._pace_freq = 2
+        self._height = 105
+        if self.xgo:
+            try:
+                if self.device_type == "xgorider":
+                    self.xgo.rider_reset()
+                else:
+                    self.xgo.reset()
+            except Exception:
+                pass
+
+    def _play_ball_task(self, leg_id):
+        """玩球动作序列（从 joystick 移植）"""
+        if leg_id != 2 or not self.xgo or self.device_type == "xgorider":
+            self._play_ball = 0
+            return
+        motor_id = [11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]
+        angle_down = [-16, 66, 1, -17, 66, 1, -14, 74, 1, -14, 72, 1]
+        motor_2 = [21, 22, 23]
+        angle_hand = [-15, 51, 2, -13, 33, -1, -15, 64, 3, -19, 59, 0]
+        angle_play_2 = [10, 0, 0]
+        try:
+            dog = self.xgo
+            if self._play_ball:
+                dog.motor_speed(100)
+                dog.motor(motor_id, angle_down)
+                time.sleep(0.3)
+            if self._play_ball:
+                dog.motor(motor_id, angle_hand)
+                time.sleep(0.2)
+            if self._play_ball:
+                dog.motor_speed(255)
+                time.sleep(0.01)
+            if self._play_ball:
+                dog.motor(motor_2, angle_play_2)
+                time.sleep(0.3)
+            if self._play_ball:
+                dog.motor(motor_id, angle_hand)
+                time.sleep(0.3)
+            if self._play_ball:
+                dog.motor_speed(100)
+                dog.motor(motor_id, angle_down)
+                time.sleep(0.3)
+            if self._play_ball:
+                dog.action(0xFF)
+        except Exception as e:
+            log.info(f"play_ball 异常: {e}")
+        self._height = 105
+        self._play_ball = 0
 
     # ── 事件处理 ──────────────────────────────────────────────────
 
@@ -406,6 +576,10 @@ class XGOController:
         func = self.mapping.get(key, "none")
         log.info(f"BTN  {key} {'按下' if pressed else '松开'} → func={func}")
         if func == "none":
+            return
+
+        # 跨障模式下只响应 crossing_toggle / action_255 (复位)
+        if self._crossing_state and func not in ("crossing_toggle", "action_255"):
             return
 
         if pressed:

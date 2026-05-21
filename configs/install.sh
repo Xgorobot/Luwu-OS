@@ -41,9 +41,11 @@ echo "  ✓ luwu-keys.dtbo 已部署"
 # 3. udev 规则 (fb-spi 软链接)
 echo "[3/12] 部署 udev 规则 ..."
 cp 99-fb-spi.rules /etc/udev/rules.d/
+cp 99-gamepad-no-mouse.rules /etc/udev/rules.d/
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=graphics
-echo "  ✓ 已生效"
+udevadm trigger --subsystem-match=input
+echo "  ✓ 已生效 (fb-spi + 蓝牙手柄触摸板屏蔽)"
 
 # 4. ALSA 音频配置 (dmix + dsnoop + 默认音量)
 echo "[4/12] 部署 ALSA 音频配置 ..."

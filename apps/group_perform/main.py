@@ -13,6 +13,7 @@ import json
 import socket
 import re
 import struct
+import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from subprocess import Popen, DEVNULL
@@ -359,31 +360,62 @@ def _sntp_query(host, timeout=NTP_TIMEOUT):
     return offset
 
 
+_sync_thread_started = False
+_sync_kick = threading.Event()  # 立即唤醒后台同步线程
+
+
 def sync_time_thread():
-    """后台线程：依次尝试多个 NTP 服务器，成功后设置 _time_offset。"""
+    """后台线程：循环执行 NTP 同步。
+    - 失败 → 5s 后重试
+    - 成功 → 60s 后再次刷新（防止时钟漂移）
+    - 任意时刻可通过 _sync_kick.set() 提前唤醒
+    """
     global _time_offset, _sync_status, _sync_server
-    for srv in NTP_SERVERS:
+    while not exitmark:
+        ok = False
+        for srv in NTP_SERVERS:
+            if exitmark:
+                return
+            try:
+                offset = _sntp_query(srv)
+                _time_offset = offset
+                _sync_server = srv
+                _sync_status = SYNC_OK
+                print(f"[NTP] 同步成功 via {srv}, offset={offset*1000:.1f}ms")
+                ok = True
+                break
+            except Exception as e:
+                print(f"[NTP] {srv} 失败: {e}")
+                continue
+        if not ok:
+            # 仅在原状态非 OK 时退化为 FAIL，已同步过的保留 OK 不打断使用
+            if _sync_status != SYNC_OK:
+                _sync_status = SYNC_FAIL
+            print("[NTP] 所有服务器同步失败, 5s 后重试")
+            wait_sec = 5
+        else:
+            wait_sec = 60  # 周期 resync 防漂移
+
+        # 可中断等待：exit / kick 立即返回
+        _sync_kick.clear()
+        woke = _sync_kick.wait(timeout=wait_sec)
         if exitmark:
             return
-        try:
-            offset = _sntp_query(srv)
-            _time_offset = offset
-            _sync_server = srv
-            _sync_status = SYNC_OK
-            print(f"[NTP] 同步成功 via {srv}, offset={offset*1000:.1f}ms")
-            return
-        except Exception as e:
-            print(f"[NTP] {srv} 失败: {e}")
-            continue
-    _sync_status = SYNC_FAIL
-    print("[NTP] 所有服务器同步失败")
+        if woke:
+            print("[NTP] 收到 kick, 立即重新同步")
 
 
 def start_time_sync():
-    """启动后台时间同步。可多次调用重试。"""
-    global _sync_status
-    _sync_status = SYNC_WAIT
-    threading.Thread(target=sync_time_thread, daemon=True).start()
+    """启动后台时间同步。线程只起一次，重复调用相当于 kick 重试。"""
+    global _sync_status, _sync_thread_started
+    if not _sync_thread_started:
+        _sync_thread_started = True
+        if _sync_status != SYNC_OK:
+            _sync_status = SYNC_WAIT
+        threading.Thread(target=sync_time_thread, daemon=True).start()
+    else:
+        # 已存在后台线程，唤醒它立即重试
+        _sync_kick.set()
 
 
 # ===================== MQTT 群组通信 =====================
@@ -405,6 +437,9 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.subscribe(t)
         print(f"[MQTT] 已连接并订阅房间: {room_id}")
         publish_presence("join")
+        # 1.5s 后再补一次 heartbeat，对抗 join 与 broker 订阅建立竞态丢包,
+        # 同时也促使其他设备把我加入它们的列表。
+        threading.Timer(1.5, lambda: publish_presence("heartbeat")).start()
     else:
         print(f"[MQTT] 连接失败, rc={rc}")
 
@@ -448,6 +483,18 @@ def handle_presence(data):
             }
         if is_new and msg_type == "join":
             print(f"[ROOM] 新设备加入: {ip} (型号: {data.get('dog_type', '?')})")
+
+        # 关键：收到他人的 join 时立即回应一次 heartbeat,
+        # 让新加入设备无需等待下个心跳周期 (5s) 就能发现自己,
+        # 解决"A 显示设备2 / B 显示设备1"的临时不同步窗口。
+        # 加 50~300ms 随机抖动避免 N 台设备同时回包形成风暴。
+        if msg_type == "join" and ip != local_ip:
+            def _reply_hb():
+                try:
+                    publish_presence("heartbeat")
+                except Exception:
+                    pass
+            threading.Timer(random.uniform(0.05, 0.3), _reply_hb).start()
     elif msg_type == "leave":
         with known_devices_lock:
             known_devices.pop(ip, None)
@@ -487,12 +534,35 @@ def handle_plan(data):
         music_start = data.get("music_start", 0)
         if not actions:
             return
+
+        # 诊断本机时间偏差：发起者 wait 应≈ACTION_PREP_DELAY；接收者大幅偏离意味着时钟未对齐
+        now = synced_time()
+        wait = music_start - now
+        sync_tag = "OK" if _sync_status == SYNC_OK else (
+            "WAIT" if _sync_status == SYNC_WAIT else "FAIL")
+        print(f"[PLAN] 收到计划: {len(actions)} 动作, music_start={music_start:.3f}, "
+              f"本机now={now:.3f}, wait={wait:.2f}s [sync={sync_tag}]")
+
+        # 本机未同步 → 立即触发后台重新同步（不阻塞回调线程）
+        if _sync_status != SYNC_OK:
+            print("[PLAN] 本机时间未同步, 触发立即重新同步")
+            start_time_sync()  # 已存在则 kick
+
+        # 时差过大保护：避免狗"半天才动"或"立即乱跑"
+        # 计划已大幅过期 → 拒绝
+        if wait < -2.0:
+            print(f"[PLAN] 计划已过期 wait={wait:.2f}s, 拒绝执行 (检查时钟同步)")
+            return
+        # 偏差超过 30s（绝对不可能是正常 prep delay）→ 拒绝
+        if wait > 30.0:
+            print(f"[PLAN] 偏差过大 wait={wait:.2f}s, 拒绝执行 (检查时钟同步)")
+            return
+
         action_plan = {
             "actions": actions,
             "music_start": music_start
         }
         group_perform = True
-        print(f"[PLAN] 收到动作计划: {len(actions)} 个动作, 音乐开始于 {music_start:.3f}")
 
 
 def publish_presence(msg_type):
@@ -603,9 +673,22 @@ def action_executor():
     actions = plan["actions"]
     music_start = plan["music_start"]
 
+    # 启动前若本机未同步，最多用 2.5s（< ACTION_PREP_DELAY=3s）等待后台同步
+    if _sync_status != SYNC_OK:
+        print("[EXEC] 本机时间未同步, 等待最多 2.5s 同步完成...")
+        start_time_sync()  # 唤醒后台线程
+        deadline = time.time() + 2.5
+        while _sync_status != SYNC_OK and time.time() < deadline:
+            if not group_perform or exitmark:
+                executor_running = False
+                return
+            time.sleep(0.05)
+        if _sync_status != SYNC_OK:
+            print("[EXEC] 警告: 时间仍未同步, 后续 wait 偏差可能较大")
+
     wait = music_start - synced_time()
+    print(f"[EXEC] 启动: music_start={music_start:.3f}, now={synced_time():.3f}, wait={wait:.2f}s")
     if wait > 0:
-        print(f"[EXEC] 等待 {wait:.1f}s 后开始...")
         end_wait = synced_time() + wait
         while synced_time() < end_wait:
             if not group_perform or exitmark:
@@ -644,8 +727,9 @@ def action_executor():
                     dog.action(aid)
                 except Exception as e:
                     print(f"[ACTION] 动作执行失败: {e}")
-            end_action = time.time() + dur
-            while time.time() < end_action:
+            # 动作持续时长用 synced_time() 保持与全局时基一致
+            end_action = synced_time() + dur
+            while synced_time() < end_action:
                 if not group_perform or exitmark:
                     break
                 time.sleep(0.1)
@@ -921,6 +1005,11 @@ class GroupPerformPage(AppFrame):
         global exitmark
         print("[group] closing", flush=True)
         exitmark = True
+        # 唤醒后台 NTP 线程让其立即退出
+        try:
+            _sync_kick.set()
+        except Exception:
+            pass
         self._refresh_timer.stop()
         self._perf_monitor.stop()
 

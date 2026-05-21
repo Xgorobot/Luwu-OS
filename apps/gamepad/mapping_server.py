@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify, send_from_directory
 
 # 配置文件路径
 MAPPINGS_FILE = "/home/pi/luwu-os/libs/gamepad_config/mappings.json"
+# TEMPLATE_DIR 已随文件迁移到 gamepad/ 目录，无需修改
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR)

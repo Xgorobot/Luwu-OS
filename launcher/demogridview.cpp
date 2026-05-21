@@ -26,8 +26,7 @@ static const DemoItem DEMOS[] = {
     {"手势识别", "Gesture",     "#FF6B6B", "apps/gesture/main.py",       "demo_gesture.png",    "*"},
     {"人脸跟随", "Face Follow", "#4A90D9", "apps/face_follow/main.py",   "demo_face_track.png", "*,!xgorider"},
     {"小球抓取", "Ball Catch",  "#50C878", "apps/ball_catch/main.py",    "demo_ball_track.png", "@dog,!xgorider"},
-    {"手柄控制", "Joystick",    "#FFD93D", "apps/joystick/main.py",      "demo_gamepad.png",    "@dog,!xgorider"},
-    {"蓝牙遥控", "BT Gamepad",  "#5B9BD5", "apps/bluetooth_gamepad/main.py", "demo_gamepad.png", "*"},
+    {"手柄控制", "Gamepad",     "#FFD93D", "apps/gamepad/main.py",        "demo_gamepad.png",    "*"},
     {"雷达扫描", "Radar",       "#2ECC71", "apps/radar/main.py",         "demo_radar.png",      "*"},
 };
 static constexpr int DEMO_TOTAL = sizeof(DEMOS) / sizeof(DEMOS[0]);
