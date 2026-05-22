@@ -19,6 +19,9 @@ class BaseASR:
     # partial 模式: "cumulative"=每次回调完整文本, "delta"=每次回调增量片段
     partial_mode = "cumulative"
 
+    # 外部设置此标志可中断录音循环（线程安全：bool 赋值在 CPython 是原子的）
+    _abort = False
+
     def __init__(self, config):
         self.config = config
         self.on_final = None       # callback(text: str)
@@ -126,11 +129,12 @@ class AliyunASR(BaseASR):
             return ""
 
         print("[AliyunASR] Recording...")
+        self._abort = False
         t_start = time.time()
         try:
-            while not result["done"] and (time.time() - t_start) < max_duration:
+            while not result["done"] and not self._abort and (time.time() - t_start) < max_duration:
                 data = stream.read(CHUNK, exception_on_overflow=False)
-                if result.get("session_ready") and not result["done"]:
+                if result.get("session_ready") and not result["done"] and not self._abort:
                     encoded = base64.b64encode(data).decode("utf-8")
                     try:
                         ws.send(json.dumps({
@@ -294,11 +298,12 @@ class DeepgramASR(BaseASR):
             return ""
 
         print("[DeepgramASR] Recording...")
+        self._abort = False
         t_start = time.time()
         try:
-            while not result["done"] and (time.time() - t_start) < max_duration:
+            while not result["done"] and not self._abort and (time.time() - t_start) < max_duration:
                 data = stream.read(CHUNK, exception_on_overflow=False)
-                if not result["done"]:
+                if not result["done"] and not self._abort:
                     try:
                         ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
                     except Exception:

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PICS_DIR = os.path.join(APP_DIR, "pics")
 KEYS_FIFO = "/tmp/luwu_keys.fifo"
-BLOCKLY_PORT = 8000
+BLOCKLY_PORT = 80
 
 # 接入 luwu-os 全局 i18n 与主题
 LUWU_ROOT = "/home/pi/luwu-os"
@@ -132,6 +132,7 @@ _TEXTS = {
         "running": "运行中:",
         "stopped": "已停止",
         "service_running": "服务运行中",
+        "browser_hint": "在浏览器输入上方地址访问",
     },
     "en": {
         "main_title": "Blockly Coding",
@@ -151,6 +152,7 @@ _TEXTS = {
         "running": "Running:",
         "stopped": "Stopped",
         "service_running": "Service running",
+        "browser_hint": "Open the address above in browser",
     },
 }
 
@@ -207,7 +209,7 @@ def kill_blockly_service():
     """清理可能残留的 xgo_blockly 服务进程。"""
     try:
         subprocess.run(["pkill", "-f", "xgo_blockly"], capture_output=True)
-        subprocess.run(["fuser", "-k", "8000/tcp"], capture_output=True)
+        subprocess.run(["fuser", "-k", "80/tcp"], capture_output=True)
         time.sleep(0.5)
         print("[coding] cleaned up blockly processes", flush=True)
     except Exception as e:
@@ -251,7 +253,7 @@ class BlocklyServiceManager:
 
         try:
             self.process = subprocess.Popen(
-                [BLOCKLY_PYTHON, "-m", "xgo_blockly.cli"],
+                [BLOCKLY_PYTHON, "-m", "xgo_blockly.cli", "--port", "80"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -477,18 +479,21 @@ class CodingPage(AppFrame):
         self._setup_keys_fifo()
 
         # --- 字体加载（用于 PIL 渲染） ---
+        self._font26 = None
         self._font22 = None
         self._font16 = None
         self._font14 = None
         self._font12 = None
         self._font10 = None
         try:
+            self._font26 = ImageFont.truetype(FONT_PATH, 26)
             self._font22 = ImageFont.truetype(FONT_PATH, 22)
             self._font16 = ImageFont.truetype(FONT_PATH, 16)
             self._font14 = ImageFont.truetype(FONT_PATH, 14)
             self._font12 = ImageFont.truetype(FONT_PATH, 12)
             self._font10 = ImageFont.truetype(FONT_PATH, 10)
         except Exception:
+            self._font26 = ImageFont.load_default()
             self._font22 = ImageFont.load_default()
             self._font16 = ImageFont.load_default()
             self._font14 = ImageFont.load_default()
@@ -815,8 +820,8 @@ class CodingPage(AppFrame):
         self._paste_icon(bg, self._icon_ai, (170, 56))
         self._paste_icon(bg, self._icon_blockly, (90, 56))
 
-        # IP 卡片（白底圆角，仅居中放 IP:port）
-        card_x, card_y, card_w, card_h = 30, 138, 260, 50
+        # IP 卡片（白底圆角，居中放 IP 地址）
+        card_x, card_y, card_w, card_h = 30, 130, 260, 56
         draw.rounded_rectangle(
             [(card_x, card_y), (card_x + card_w, card_y + card_h)],
             radius=10,
@@ -824,18 +829,21 @@ class CodingPage(AppFrame):
             outline=T_RGB.bg_track,
             width=1,
         )
-        # IP:port
-        ip_text = f"{self.local_ip}:{BLOCKLY_PORT}"
-        tw = draw.textbbox((0, 0), ip_text, font=self._font22)[2]
+        # IP 地址（80端口不显示端口号）
+        if BLOCKLY_PORT == 80:
+            ip_text = self.local_ip
+        else:
+            ip_text = f"{self.local_ip}:{BLOCKLY_PORT}"
+        tw = draw.textbbox((0, 0), ip_text, font=self._font26)[2]
         draw.text(
-            (card_x + (card_w - tw) // 2, card_y + (card_h - 22) // 2),
-            ip_text, font=self._font22, fill=T_RGB.accent,
+            (card_x + (card_w - tw) // 2, card_y + (card_h - 26) // 2),
+            ip_text, font=self._font26, fill=T_RGB.accent,
         )
 
-        # 服务运行中提示
-        running_text = t("service_running")
-        rw = draw.textbbox((0, 0), running_text, font=self._font12)[2]
-        draw.text(((320 - rw) // 2, 200), running_text, font=self._font12, fill=T_RGB.success)
+        # 浏览器打开提示
+        hint_text = t("browser_hint")
+        hw = draw.textbbox((0, 0), hint_text, font=self._font14)[2]
+        draw.text(((320 - hw) // 2, 202), hint_text, font=self._font14, fill=T_RGB.text_primary)
 
     def _render_file_list(self, draw, bg):
         """渲染文件列表页面。"""

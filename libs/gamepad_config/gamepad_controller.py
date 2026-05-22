@@ -15,8 +15,10 @@ import os
 import sys
 import time
 import signal
+import subprocess
 import threading
 import logging
+import glob
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -67,7 +69,35 @@ BUTTON_MAP = {
     139: 16,  # Home (旧键盘兼容)
 }
 # evdev ABS 码 → 轴索引
-AXIS_MAP = {0: 0, 1: 1, 3: 2, 4: 3, 2: 4, 5: 5}
+# 标准 Xbox 布局: {0=ABS_X, 1=ABS_Y, 3=ABS_RX, 4=ABS_RY, 2=ABS_Z(LT), 5=ABS_RZ(RT)}
+# BM769 兼容布局: 右摇杆用 ABS_GAS(9)/ABS_BRAKE(10) 代替 ABS_RX/RY
+AXIS_MAP = {0: 0, 1: 1, 3: 2, 4: 3, 2: 4, 5: 5, 9: 2, 10: 3}
+
+# ── BLE GATT 手柄相关 ──────────────────────────────────────────
+# 需要通过 BLE GATT vendor characteristic 读取的手柄模式
+BLE_GAMEPAD_PATTERNS = ["bm769", "bsp-s11", "bsp"]
+
+# BM769/ESP32-BLE-Gamepad 十字键编码：bitmask 而非标准 hat 角度
+# bit0(0x01)=UP, bit1(0x02)=RIGHT, bit2(0x04)=DOWN, bit3(0x08)=LEFT
+# 0x00 = 居中(松开)
+HAT_BITMASK_TO_BUTTONS = {
+    0x00: set(),
+    0x01: {12},           # UP
+    0x02: {15},           # RIGHT
+    0x03: {12, 15},       # UP+RIGHT
+    0x04: {13},           # DOWN
+    0x05: {12, 13},
+    0x06: {13, 15},       # DOWN+RIGHT
+    0x07: {12, 13, 15},
+    0x08: {14},           # LEFT
+    0x09: {12, 14},       # UP+LEFT
+    0x0A: {14, 15},
+    0x0B: {12, 14, 15},
+    0x0C: {13, 14},       # DOWN+LEFT
+    0x0D: {12, 13, 14},
+    0x0E: {13, 14, 15},
+    0x0F: {12, 13, 14, 15},
+}
 
 # ── 功能分类 ──────────────────────────────────────────────────────
 # 按下立刻执行一次（不需要松开）
@@ -187,7 +217,7 @@ class XGOController:
         import evdev
         all_devs = evdev.list_devices()
         log.debug(f"evdev 扫描到 {len(all_devs)} 个输入设备:")
-        candidates = []  # [(priority, dev)] 0=主手柄 1=触摸板/其他
+        candidates = []  # [(priority, dev)] 0=主手柄 1=触摸板/其他 2=consumer control
         for path in all_devs:
             try:
                 dev = evdev.InputDevice(path)
@@ -195,15 +225,26 @@ class XGOController:
                 matched = any(kw in name_low for kw in GAMEPAD_KEYWORDS)
                 log.debug(f"  {path}: '{dev.name}' → {'✓ 匹配' if matched else '✗ 跳过'}")
                 if matched:
-                    # 触摸板/运动传感器优先级降低，优先选主手柄
+                    # 检查设备是否真的有游戏手柄按键能力（BTN_SOUTH=304）
+                    key_caps = dev.capabilities().get(evdev.ecodes.EV_KEY, [])
+                    has_gamepad_btns = 304 in key_caps
+
+                    # consumer control / 触摸板 / 运动传感器优先级降低
+                    is_consumer = "consumer control" in name_low
                     is_secondary = any(x in name_low for x in ["touchpad", "touch pad", "motion", "gyro", "accel"])
-                    candidates.append((1 if is_secondary else 0, dev))
+
+                    if is_consumer or is_secondary:
+                        candidates.append((2 if is_consumer else 1, dev))
+                    elif has_gamepad_btns:
+                        candidates.append((0, dev))
+                    else:
+                        candidates.append((1, dev))
             except Exception as e:
                 log.debug(f"  {path}: 打开失败 {e}")
         if candidates:
             candidates.sort(key=lambda x: x[0])
             dev = candidates[0][1]
-            log.info(f"找到手柄: {dev.name} ({dev.path})")
+            log.info(f"找到手柄: {dev.name} ({dev.path}) [priority={candidates[0][0]}]")
             return dev
         return None
 
@@ -572,6 +613,13 @@ class XGOController:
     # ── 事件处理 ──────────────────────────────────────────────────
 
     def _on_button(self, btn_idx, pressed):
+        # 推送到键位映射页面（无论是否已映射，都需要闪动反馈）
+        try:
+            from mapping_events import push as _push_event
+            _push_event({'type': 'button', 'index': btn_idx, 'value': 1 if pressed else 0})
+        except ImportError:
+            pass
+
         key = f"button_{btn_idx}"
         func = self.mapping.get(key, "none")
         log.info(f"BTN  {key} {'按下' if pressed else '松开'} → func={func}")
@@ -604,6 +652,14 @@ class XGOController:
                     self._stop_movement()
 
     def _on_axis(self, axis_idx, value):
+        # 推送到键位映射页面（仅轴值超过死区时推送，避免噪音闪动）
+        try:
+            from mapping_events import push as _push_event
+            if abs(value) > 0.3:
+                _push_event({'type': 'axis', 'index': axis_idx, 'value': round(value, 4)})
+        except ImportError:
+            pass
+
         self._axes[axis_idx] = value
         key = f"axis_{axis_idx}"
         func = self.mapping.get(key, "none")
@@ -616,6 +672,315 @@ class XGOController:
             if abs(value) > DEADZONE:
                 log.info(f"AXIS {key}={value:+.3f} → func={func}, v={v:+.3f}")
             self._call(func, axis_val=v)
+
+    # ── BLE GATT 手柄路径 ──────────────────────────────────────
+
+    def _is_ble_gatt_gamepad(self, name: str) -> bool:
+        """检测是否为需要 BLE GATT 路径的手柄"""
+        return any(p in name.lower() for p in BLE_GAMEPAD_PATTERNS)
+
+    def _read_report_map_from_evdev(self, evdev_path: str):
+        """从 evdev 设备路径找到 uhid report_descriptor"""
+        # evdev_path 如 /dev/input/event3
+        dev_name = os.path.basename(evdev_path)  # event3
+        try:
+            sysfs_dev = f"/sys/class/input/{dev_name}/device"
+            real_dev = os.path.realpath(sysfs_dev)
+            # real_dev: .../uhid/0005:1949:0402.XXXX/input/inputXX
+            uhid_dir = os.path.dirname(real_dev)  # .../uhid/0005:1949:0402.XXXX
+            report_path = os.path.join(uhid_dir, "report_descriptor")
+            if os.path.exists(report_path):
+                with open(report_path, "rb") as f:
+                    data = f.read()
+                # 去除 sysfs 文件尾部填充的 \x00
+                data = data.rstrip(b'\x00')
+                if data:
+                    log.info(f"[BLE] 读取 Report Map: {len(data)} bytes from {report_path}")
+                    return data
+        except Exception as e:
+            log.warning(f"[BLE] 从 evdev 路径 {evdev_path} 读取 Report Map 失败: {e}")
+
+        # Fallback: 扫描所有 uhid 设备
+        for uhid_dir in glob.glob("/sys/devices/virtual/misc/uhid/0005:*"):
+            report_path = os.path.join(uhid_dir, "report_descriptor")
+            if os.path.exists(report_path):
+                try:
+                    with open(report_path, "rb") as f:
+                        data = f.read().rstrip(b'\x00')
+                    if data:
+                        log.info(f"[BLE] Fallback Report Map: {len(data)} bytes from {report_path}")
+                        return data
+                except Exception:
+                    pass
+        return None
+
+    def _find_ble_mac(self, dev_name: str):
+        """从设备名查找对应的 BLE MAC 地址"""
+        try:
+            result = subprocess.run(
+                ["bluetoothctl", "devices"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                if dev_name.lower() in line.lower():
+                    # 格式: "Device XX:XX:XX:XX:XX:XX DeviceName"
+                    parts = line.strip().split()
+                    if len(parts) >= 2:
+                        mac = parts[1]
+                        log.info(f"[BLE] 找到 MAC: {mac} ({dev_name})")
+                        return mac
+        except Exception as e:
+            log.warning(f"[BLE] bluetoothctl devices 失败: {e}")
+        return None
+
+    def _dispatch_ble_events(self, events, btn_state, axis_state, hat_state):
+        """
+        分发 BLE GamepadEvent 列表，带状态去重。
+        返回更新后的 (btn_state, axis_state, hat_state)。
+        """
+        for evt in events:
+            if evt.type == 'button':
+                prev = btn_state.get(evt.index, 0)
+                if prev != evt.value:
+                    btn_state[evt.index] = evt.value
+                    self._on_button(evt.index, evt.value == 1)
+
+            elif evt.type == 'axis':
+                norm = evt.value / 32767.0
+                # 限制范围
+                norm = max(-1.0, min(1.0, norm))
+                prev = axis_state.get(evt.index, 0.0)
+                if abs(norm - prev) > 0.01:
+                    axis_state[evt.index] = norm
+                    self._on_axis(evt.index, round(norm, 4))
+
+            elif evt.type == 'hat':
+                hv = evt.value
+                # BM769/ESP32-BLE-Gamepad 使用 bitmask 编码:
+                #   bit0(0x01)=UP, bit1(0x02)=RIGHT, bit2(0x04)=DOWN, bit3(0x08)=LEFT
+                #   0x00 = 居中
+                if hv != hat_state:
+                    prev_btns = HAT_BITMASK_TO_BUTTONS.get(hat_state, set())
+                    new_btns = HAT_BITMASK_TO_BUTTONS.get(hv, set())
+                    # 只释放不再按下的按钮
+                    for b in prev_btns - new_btns:
+                        self._on_button(b, False)
+                    # 只按下新按钮
+                    for b in new_btns - prev_btns:
+                        self._on_button(b, True)
+                    hat_state = hv
+
+        return btn_state, axis_state, hat_state
+
+    def _run_ble_loop(self, dev):
+        """
+        BLE GATT 手柄主循环（BM769 等 ESP32-BLE-Gamepad 设备）。
+        通过 ble_gatt_monitor.py 子进程读取 GATT 通知，
+        用 HID Report Map 自动解析数据。
+        """
+        log.info(f"[BLE] ===== 启动 BLE 手柄路径: {dev.name} =====")
+
+        # 1. 读取 HID Report Map
+        report_map_data = self._read_report_map_from_evdev(dev.path)
+        if not report_map_data:
+            log.error("[BLE] 无法读取 Report Map，放弃 BLE 路径")
+            return
+
+        # 2. 解析 Report Map
+        try:
+            from ble_hid_reader import parse_report_map, decode_notification
+        except ImportError:
+            log.error("[BLE] 无法导入 ble_hid_reader")
+            return
+
+        layouts = parse_report_map(report_map_data)
+
+        # 找主游戏 report（含 Generic Desktop usage）
+        game_layout = None
+        for rid, layout in layouts.items():
+            has_gd = any(f.usage_page == 1 and not f.is_constant for f in layout.fields)
+            if has_gd:
+                game_layout = layout
+                break
+        if not game_layout and layouts:
+            game_layout = next(iter(layouts.values()))
+
+        if not game_layout:
+            log.error("[BLE] Report Map 无有效游戏布局")
+            return
+
+        log.info(
+            f"[BLE] 布局 Report {game_layout.report_id}: "
+            f"{len(game_layout.axes)}轴 {game_layout.button_count}按钮 "
+            f"{len(game_layout.hats)}hat {len(game_layout.sims)}sims "
+            f"({game_layout.total_bytes} bytes)"
+        )
+
+        # 3. 查找 BLE MAC
+        mac = self._find_ble_mac(dev.name)
+        if not mac:
+            log.error(f"[BLE] 无法找到 {dev.name} 的 BLE MAC 地址")
+            return
+
+        # 4. 启动 ble_gatt_monitor.py 子进程
+        monitor_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "ble_gatt_monitor.py")
+        log.info(f"[BLE] 启动监控子进程: {monitor_script} {mac}")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, monitor_script, mac],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            log.error(f"[BLE] 无法启动监控子进程: {e}")
+            return
+
+        # 5. 事件循环
+        import select as sel_module
+        btn_state = {}
+        axis_state = {}
+        hat_state = 0   # 0x00 = bitmask 居中(无按键)
+        subscribed = False
+        last_event_ts = time.time()
+        stall_warned = False
+
+        log.info("[BLE] 进入 BLE 事件循环...")
+
+        try:
+            while self._running:
+                # 检查子进程是否存活
+                if proc.poll() is not None:
+                    log.warning(f"[BLE] 监控子进程退出 (code={proc.returncode})，准备重连...")
+                    break
+
+                # 超时控制
+                r, _, _ = sel_module.select([proc.stdout], [], [], 0.5)
+                if not r:
+                    # 子进程初始化可能较慢，10秒内无数据正常
+                    if subscribed and time.time() - last_event_ts > 10:
+                        if not stall_warned:
+                            log.warning("[BLE] 10秒无数据，手柄可能已休眠")
+                            stall_warned = True
+                    continue
+
+                line = proc.stdout.readline()
+                if not line:
+                    break
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+                msg_type = obj.get("type", "")
+
+                if msg_type == "status":
+                    msg = obj.get("msg", "")
+                    log.info(f"[BLE] 状态: {msg}")
+                    if obj.get("error"):
+                        log.error(f"[BLE] 错误: {msg}")
+                        break
+                    if "subscribed ok" in msg:
+                        subscribed = True
+                        stall_warned = False
+                        last_event_ts = time.time()
+                    continue
+
+                if msg_type != "raw":
+                    continue
+
+                hex_str = obj.get("hex", "")
+                if len(hex_str) < 14:  # 最少 7 bytes
+                    continue
+
+                try:
+                    raw = bytes.fromhex(hex_str)
+                except ValueError:
+                    continue
+
+                # 解码
+                events = decode_notification(raw, game_layout)
+                if not events:
+                    continue
+
+                last_event_ts = time.time()
+                stall_warned = False
+
+                # 分发事件
+                btn_state, axis_state, hat_state = self._dispatch_ble_events(
+                    events, btn_state, axis_state, hat_state)
+
+        finally:
+            log.info("[BLE] 停止监控子进程")
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+        # 等待重连
+        time.sleep(2)
+
+    def _run_evdev_loop(self, dev):
+        """标准 evdev 手柄循环（原有逻辑抽取）"""
+        import evdev
+        try:
+            abs_info = {}
+            for code in AXIS_MAP:
+                try:
+                    abs_info[code] = dev.absinfo(code)
+                except (OSError, TypeError):
+                    pass
+            log.info(f"[evdev] 开始监听: {dev.name} ({', '.join(f'ABS {c}' for c in abs_info)})")
+
+            ev_count = 0
+            for event in dev.read_loop():
+                if not self._running:
+                    break
+
+                ev_count += 1
+                if ev_count % 50 == 1:
+                    log.debug(f"[evdev 事件循环 alive] 已处理 {ev_count} 个事件")
+
+                if event.type == evdev.ecodes.EV_KEY:
+                    idx = BUTTON_MAP.get(event.code)
+                    if idx is not None:
+                        log.debug(f"EV_KEY code={event.code} idx={idx} value={event.value}")
+                        self._on_button(idx, event.value == 1)
+                    else:
+                        log.debug(f"EV_KEY code={event.code} → 不在 BUTTON_MAP 中，忽略")
+
+                elif event.type == evdev.ecodes.EV_ABS:
+                    code = event.code
+                    if code in AXIS_MAP:
+                        info = abs_info.get(code)
+                        if info and info.max != info.min:
+                            norm = (event.value - info.min) / (info.max - info.min) * 2 - 1
+                            self._on_axis(AXIS_MAP[code], round(norm, 4))
+                    elif code == 16:  # D-pad X
+                        self._on_button(14, event.value == -1)
+                        self._on_button(15, event.value == 1)
+                        if event.value == 0:
+                            self._on_button(14, False)
+                            self._on_button(15, False)
+                    elif code == 17:  # D-pad Y
+                        self._on_button(12, event.value == -1)
+                        self._on_button(13, event.value == 1)
+                        if event.value == 0:
+                            self._on_button(12, False)
+                            self._on_button(13, False)
+
+        except OSError:
+            log.warning("[evdev] 手柄断开连接，等待重连...")
+            self._stop_movement()
 
     # ── 主循环 ────────────────────────────────────────────────────
 
@@ -631,7 +996,6 @@ class XGOController:
         self._running = True
         self._start_config_watcher()
 
-        import evdev
         while self._running:
             dev = self._find_gamepad()
             if not dev:
@@ -640,56 +1004,27 @@ class XGOController:
                 continue
 
             self._gamepad_dev = dev
-            try:
-                abs_info = {code: dev.absinfo(code) for code in AXIS_MAP if hasattr(dev, "absinfo")}
-                log.info(f"开始监听: {dev.name} ({', '.join(f'ABS {c}' for c in abs_info)})")
 
-                ev_count = 0
-                for event in dev.read_loop():
-                    if not self._running:
-                        break
+            # 双路径：BLE GATT 手柄走 BLE 路径，标准手柄走 evdev
+            if self._is_ble_gatt_gamepad(dev.name):
+                log.info(f"检测到 BLE GATT 手柄: {dev.name}，启用 BLE 路径")
+                try:
+                    self._run_ble_loop(dev)
+                except Exception as e:
+                    log.error(f"[BLE] 循环异常: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    time.sleep(1)
+            else:
+                try:
+                    self._run_evdev_loop(dev)
+                except Exception as e:
+                    log.error(f"[evdev] 循环异常: {e}")
+                    time.sleep(1)
 
-                    ev_count += 1
-                    # 每 50 个事件打一次心跳，确保知道线程还活着
-                    if ev_count % 50 == 1:
-                        log.debug(f"[事件循环 alive] 已处理 {ev_count} 个事件")
-
-                    if event.type == evdev.ecodes.EV_KEY:
-                        idx = BUTTON_MAP.get(event.code)
-                        if idx is not None:
-                            log.debug(f"EV_KEY code={event.code} idx={idx} value={event.value}")
-                            self._on_button(idx, event.value == 1)
-                        else:
-                            log.debug(f"EV_KEY code={event.code} → 不在 BUTTON_MAP 中，忽略")
-
-                    elif event.type == evdev.ecodes.EV_ABS:
-                        code = event.code
-                        if code in AXIS_MAP:
-                            info = abs_info.get(code)
-                            if info and info.max != info.min:
-                                norm = (event.value - info.min) / (info.max - info.min) * 2 - 1
-                                self._on_axis(AXIS_MAP[code], round(norm, 4))
-                        elif code == 16:  # D-pad X
-                            self._on_button(14, event.value == -1)
-                            self._on_button(15, event.value == 1)
-                            if event.value == 0:
-                                self._on_button(14, False)
-                                self._on_button(15, False)
-                        elif code == 17:  # D-pad Y
-                            self._on_button(12, event.value == -1)
-                            self._on_button(13, event.value == 1)
-                            if event.value == 0:
-                                self._on_button(12, False)
-                                self._on_button(13, False)
-
-            except OSError:
-                log.warning("手柄断开连接，等待重连...")
-                self._gamepad_dev = None
-                self._stop_movement()
-                time.sleep(1)
-            except Exception as e:
-                log.error(f"事件循环异常: {e}")
-                time.sleep(1)
+            self._gamepad_dev = None
+            self._stop_movement()
+            time.sleep(1)
 
     def _on_exit(self, *_):
         log.info("收到退出信号，停止机器人...")

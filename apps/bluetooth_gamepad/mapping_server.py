@@ -12,10 +12,21 @@ import json
 import os
 import sys
 import threading
-from flask import Flask, request, jsonify, send_from_directory
+import queue
+from flask import Flask, request, jsonify, send_from_directory, Response
+
+# 手柄事件广播模块
+_GP_DIR = '/home/pi/luwu-os/libs/gamepad_config'
+if _GP_DIR not in sys.path:
+    sys.path.insert(0, _GP_DIR)
+try:
+    from mapping_events import get_queue as _get_event_queue
+except ImportError:
+    _get_event_queue = None
 
 # 配置文件路径
 MAPPINGS_FILE = "/home/pi/luwu-os/libs/gamepad_config/mappings.json"
+# TEMPLATE_DIR 已随文件迁移到 gamepad/ 目录，无需修改
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
@@ -227,6 +238,31 @@ def index():
     """配置页面"""
     return send_from_directory(TEMPLATE_DIR, "mapping.html")
 
+
+@app.route("/api/events")
+def gamepad_events():
+    """SSE 端点 — 实时推送手柄按键/摇杆事件到映射页面"""
+    def event_stream():
+        if _get_event_queue is None:
+            yield "data: {\"error\": \"event queue not available\"}\n\n"
+            return
+        q = _get_event_queue()
+        while True:
+            try:
+                evt = q.get(timeout=1)
+                yield f"data: {json.dumps(evt)}\n\n"
+            except queue.Empty:
+                # 心跳防止连接超时
+                yield ": heartbeat\n\n"
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
 
 @app.route("/<path:filename>")
 def static_files(filename):

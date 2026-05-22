@@ -134,6 +134,13 @@ class AIChatPage(QWidget):
         self._loading_frame = 0
         # 后端就绪标志（由 worker 线程设置，主线程轮询）
         self._backend_ready = False
+        # 对话取消标志：长按 C 回到配置页面时置 True，对话线程检查此标志退出
+        self._conversation_cancelled = False
+        # 长按 C 计时器：按住 C 超过 2 秒触发"回到配置"，短按 C 仍为退出
+        self._c_press_timer = QTimer(self)
+        self._c_press_timer.setSingleShot(True)
+        self._c_press_timer.timeout.connect(self._on_c_long_press)
+        self._c_held = False  # C 键是否处于按下状态
 
         # ---- Display label (acts as LCD, fills entire widget) ----
         self.display = QLabel(self)
@@ -323,9 +330,12 @@ class AIChatPage(QWidget):
 
     def keyPressEvent(self, ev: QKeyEvent):
         if ev.key() == Qt.Key.Key_Back:
-            # C key (bottom-left, KEY_BACK) → 退出（启动期间也可用）
-            print("[ai_chat] KEY_BACK (C) -> exit", flush=True)
-            self.close()
+            # C key (bottom-left, KEY_BACK) → 短按退出，长按(2s)回到配置页面
+            # 防止按键重复触发（auto-repeat）
+            if not self._c_held:
+                self._c_held = True
+                self._c_press_timer.start(2000)
+                print("[ai_chat] KEY_BACK (C) pressed -> start long-press timer", flush=True)
             return
         # 启动未完成时忽略其他按键，避免误触发对话流程
         if self._is_loading:
@@ -338,6 +348,19 @@ class AIChatPage(QWidget):
             # A key (top-left, KEY_LEFT) → 也支持开始聊天
             print("[ai_chat] KEY_LEFT (A) -> start chat", flush=True)
             self._start_conversation()
+
+    def keyReleaseEvent(self, ev: QKeyEvent):
+        if ev.key() == Qt.Key.Key_Back:
+            if self._c_held:
+                self._c_held = False
+                if self._c_press_timer.isActive():
+                    # 短按 C → 取消计时器，执行退出
+                    self._c_press_timer.stop()
+                    print("[ai_chat] KEY_BACK (C) short press -> exit", flush=True)
+                    self.close()
+                # 若计时器已触发（长按），则 _on_c_long_press 已处理，这里不做任何事
+            return
+        super().keyReleaseEvent(ev)
 
     def closeEvent(self, ev):
         print("[ai_chat] closing", flush=True)
@@ -471,10 +494,10 @@ class AIChatPage(QWidget):
             self._on_init_done()
 
     def _on_init_done(self):
-        """GUI 线程：后端就绪后关闭 loading 动画并切到待机页面。"""
+        """GUI 线程：后端就绪后关闭 loading 动画，若配置已完成则直接开始对话，否则显示二维码待机页面。"""
         if not self._is_loading:
             return  # 已被轮询/信号其中一路调过
-        print("[Main] _on_init_done -> switch to idle", flush=True)
+        print("[Main] _on_init_done -> check config", flush=True)
         self._is_loading = False
         try:
             if self._loading_timer.isActive():
@@ -486,10 +509,20 @@ class AIChatPage(QWidget):
                 self._ready_poll_timer.stop()
         except Exception:
             pass
-        try:
-            self._show_idle()
-        except Exception as e:
-            print(f"[Main] _show_idle after init error: {e}", flush=True)
+        # 配置已完成 → 直接进入对话模式，跳过二维码配置页
+        if self._is_config_ready():
+            print("[Main] Config ready -> auto start conversation", flush=True)
+            try:
+                self._start_conversation()
+            except Exception as e:
+                print(f"[Main] auto start conversation error: {e}", flush=True)
+                self._show_idle()
+        else:
+            print("[Main] Config not ready -> show idle (QR code)", flush=True)
+            try:
+                self._show_idle()
+            except Exception as e:
+                print(f"[Main] _show_idle after init error: {e}", flush=True)
 
     def _init_backend(self):
         """Initialize config, web server, and services"""
@@ -677,6 +710,45 @@ class AIChatPage(QWidget):
     def _show_corner_hints(self):
         self._corner_visible_signal.emit(True)
 
+    # ===== Long-press C: Back to Config =====
+
+    def _on_c_long_press(self):
+        """长按 C 键(2秒)触发：中断对话并回到二维码配置页面。"""
+        self._c_held = False  # 重置按键状态
+        print("[ai_chat] KEY_BACK (C) long press -> back to config", flush=True)
+        self._back_to_config()
+
+    def _back_to_config(self):
+        """中断当前对话，切回二维码配置页面。
+        - 设置 _conversation_cancelled 让对话线程尽快退出
+        - 中止 ASR 录音（若有）
+        - 重置状态机到 IDLE
+        - 显示二维码待机画面（供用户重新配置）
+        """
+        # 1. 标记取消对话（对话线程在每轮循环开头检查此标志）
+        self._conversation_cancelled = True
+
+        # 2. 中止正在进行的 ASR 录音（最多 ~100ms 内退出录音循环）
+        if self.asr:
+            try:
+                self.asr._abort = True
+            except Exception:
+                pass
+
+        # 3. 重置状态机到 IDLE（触发 _on_state_changed 显示 IDLE 界面）
+        try:
+            self.sm.set_state(State.IDLE)
+        except Exception:
+            pass
+
+        # 4. 直接显示二维码配置页面（覆盖对话画面）
+        try:
+            self._show_idle()
+        except Exception as e:
+            print(f"[Main] _back_to_config show_idle error: {e}", flush=True)
+
+        print("[Main] Back to config mode (QR screen)", flush=True)
+
     # ===== Conversation Flow =====
 
     def _start_conversation(self):
@@ -688,6 +760,8 @@ class AIChatPage(QWidget):
             print("[Main] Config not ready, ignore start conversation")
             return
 
+        # 重置取消标志（上次长按 C 可能遗留 True）
+        self._conversation_cancelled = False
         print("[Main] Starting conversation...")
         play_ding()
         threading.Thread(target=self._conversation_flow, daemon=True).start()
@@ -698,7 +772,7 @@ class AIChatPage(QWidget):
         silent_count = 0
 
         try:
-            while self.running:
+            while self.running and not self._conversation_cancelled:
                 # === 1. ASR: Record and recognize ===
                 self.sm.set_state(State.LISTENING)
                 if not self.asr:
@@ -717,6 +791,11 @@ class AIChatPage(QWidget):
                 self.asr.on_partial = on_partial
                 user_text = self.asr.start_recording(max_duration=15)
                 print(f"[Main] ASR result: '{user_text}'")
+
+                # ASR 录音期间可能被长按 C 取消，立即退出对话
+                if self._conversation_cancelled:
+                    print("[Main] Conversation cancelled during ASR", flush=True)
+                    break
 
                 if not user_text or not user_text.strip():
                     silent_count += 1
