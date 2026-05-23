@@ -519,8 +519,9 @@ class BTWorker(QThread):
             _bt.ensure_alive()
 
             # 2.1 优先复用已连接的手柄
+            # 但如果用户主动触发了重扫，不复用，先断开再扫描
             mac, name = self._find_connected()
-            if mac:
+            if mac and not self._force_rescan:
                 _bt_log(f"Found already-connected gamepad: {name} ({mac})")
                 self.status_changed.emit("already", name)
                 self.gamepad_ready.emit(mac, name)
@@ -529,17 +530,29 @@ class BTWorker(QThread):
                     break
                 continue
 
+            # 如果 force_rescan 且手柄仍连着，先断开它
+            if mac and self._force_rescan:
+                _bt_log(f"force_rescan: disconnecting {name} ({mac}) before scan")
+                bt_disconnect(mac)
+                # 等手柄真正断开（最多 3 秒）
+                for _ in range(6):
+                    if not bt_is_connected(mac):
+                        break
+                    time.sleep(0.5)
+                _bt_log(f"force_rescan: disconnect done, connected={bt_is_connected(mac)}")
+
+            # 清除 force_rescan 标志，后续流程正常执行
+            self._force_rescan = False
+
             # 2.2 尝试直接连接已知已配对但未连接的手柄（无需扫描）
-            # 但如果用户主动触发了重扫/断开，跳过直连，直接进入扫描流程
-            if not self._force_rescan:
-                mac, name = self._find_paired_disconnected()
-                if mac:
-                    _bt_log(f"Found paired-but-disconnected gamepad: {name} ({mac}), trying connect")
-                    self.status_changed.emit("connecting", name)
-                    if self._try_connect_paired(mac, name):
-                        self._monitor(mac, name)
-                        continue
-                    _bt_log(f"Direct connect to {name} failed, falling through to scan")
+            mac, name = self._find_paired_disconnected()
+            if mac:
+                _bt_log(f"Found paired-but-disconnected gamepad: {name} ({mac}), trying connect")
+                self.status_changed.emit("connecting", name)
+                if self._try_connect_paired(mac, name):
+                    self._monitor(mac, name)
+                    continue
+                _bt_log(f"Direct connect to {name} failed, falling through to scan")
 
             # 2.3 扫描 + 配对 + 连接
             ok = self._scan_and_connect()
@@ -549,7 +562,6 @@ class BTWorker(QThread):
                     if not self._running or self._force_rescan:
                         break
                     time.sleep(1)
-                self._force_rescan = False
 
     def _find_connected(self):
         for mac, name, connected in find_gamepads():
@@ -720,11 +732,15 @@ class BTWorker(QThread):
                 if disconnect_count <= 2:
                     self.status_changed.emit("reconnecting", name)
                     _bt_log(f"  attempting quick reconnect #{disconnect_count}")
+                    # 通知上层控制器已丢失，停止当前控制器线程
+                    self.gamepad_lost.emit()
                     if bt_connect(mac):
                         for _ in range(5):
                             if bt_is_connected(mac):
                                 _bt_log(f"  quick reconnect succeeded")
                                 self.status_changed.emit("connected", name)
+                                # 通知上层重新启动控制器线程
+                                self.gamepad_ready.emit(mac, name)
                                 disconnect_count = 0
                                 break
                             time.sleep(0.5)
@@ -744,12 +760,12 @@ class BTWorker(QThread):
                 time.sleep(2)
                 return
 
-        # 如果是 force_rescan 触发的退出，也断开当前设备
-        if self._current_mac and self._force_rescan:
-            _bt_log(f"monitor: rescan requested, disconnecting {name} ({mac})")
-            bt_disconnect(mac)
-        
-        self._current_mac = ""
+        # force_rescan 触发的退出：不在这里断开，交给主循环统一处理
+        # （主循环在进入扫描前会 disconnect + 等待断开确认）
+        if self._current_mac:
+            # 仅 force_rescan 正常退出的路径（_force_disconnect 已在上面 break 前处理）
+            self._current_mac = ""
+            self.gamepad_lost.emit()
         # 重置标志，让主循环进入扫描流程
         if self._force_disconnect:
             self._force_disconnect = False
@@ -757,6 +773,35 @@ class BTWorker(QThread):
 
 
 # ===================== 控制器线程 =====================
+# 预初始化 xgolib 单例，避免每次重连都重新初始化串口（耗时 1-2 秒）
+_xgo_instance = None
+_xgo_device_type = None
+
+
+def _ensure_xgo():
+    """懒初始化 xgolib 单例，全局复用"""
+    global _xgo_instance, _xgo_device_type
+    if _xgo_instance is not None:
+        return _xgo_instance, _xgo_device_type
+    try:
+        import xgolib
+        print("[bt_gamepad] initializing xgolib (one-time)...", flush=True)
+        _xgo_instance = xgolib.XGO()
+        fw = getattr(_xgo_instance, "version", "")
+        if fw and fw[0] == "R":
+            _xgo_device_type = "xgorider"
+        elif fw and fw[0] == "L":
+            _xgo_device_type = "xgolite"
+        else:
+            _xgo_device_type = "xgomini"
+        print(f"[bt_gamepad] xgolib ready: {_xgo_device_type} (fw={fw})", flush=True)
+    except ImportError:
+        print("[bt_gamepad] xgolib not installed, debug mode", flush=True)
+    except Exception as e:
+        print(f"[bt_gamepad] xgolib init failed: {e}", flush=True)
+    return _xgo_instance, _xgo_device_type
+
+
 class ControllerThread(threading.Thread):
     """后台运行 libs/gamepad_config/gamepad_controller.py 中的 XGOController"""
 
@@ -773,9 +818,51 @@ class ControllerThread(threading.Thread):
             # 强制纠正 CONFIG_FILE 路径（原文件含历史遗留错误）
             gc.CONFIG_FILE = os.path.join(gp_dir, "mappings.json")
             self._controller = gc.XGOController()
-            self._controller.run()
+            # 复用全局 xgo 单例，跳过慢速串口初始化
+            xgo, dev_type = _ensure_xgo()
+            if xgo:
+                self._controller.xgo = xgo
+                self._controller.device_type = dev_type
+            else:
+                # 如果单例不可用，回退到普通初始化
+                self._controller._init_xgo()
+            self._controller._load_mapping()
+            self._controller._running = True
+            self._controller._start_config_watcher()
+            # 直接进入手柄搜索+事件循环（跳过 run() 里的 _init_xgo）
+            self._run_gamepad_loop()
         except Exception as e:
             print(f"[bt_gamepad] controller error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+    def _run_gamepad_loop(self):
+        """手柄主循环：查找设备 + 进入事件循环"""
+        c = self._controller
+        import gamepad_controller as gc
+        while c._running:
+            dev = c._find_gamepad()
+            if not dev:
+                gc.log.warning("未找到手柄，2秒后重试...")
+                time.sleep(2)
+                continue
+            c._gamepad_dev = dev
+            if c._is_ble_gatt_gamepad(dev.name):
+                gc.log.info(f"检测到 BLE GATT 手柄: {dev.name}，启用 BLE 路径")
+                try:
+                    c._run_ble_loop(dev)
+                except Exception as e:
+                    gc.log.error(f"[BLE] 循环异常: {e}")
+                    time.sleep(1)
+            else:
+                try:
+                    c._run_evdev_loop(dev)
+                except Exception as e:
+                    gc.log.error(f"[evdev] 循环异常: {e}")
+                    time.sleep(1)
+            c._gamepad_dev = None
+            c._stop_movement()
+            time.sleep(1)
 
     def stop(self):
         c = self._controller
@@ -784,6 +871,13 @@ class ControllerThread(threading.Thread):
         try:
             c._running = False
             c._stop_movement()
+            # 强制关闭 evdev 设备，让阻塞在 read_loop() 中的线程立即退出
+            if c._gamepad_dev:
+                try:
+                    c._gamepad_dev.close()
+                except Exception:
+                    pass
+                c._gamepad_dev = None
         except Exception:
             pass
 
@@ -1026,17 +1120,26 @@ class BTGamepadPage(AppFrame):
 
     # ---- 控制器启停 ----
     def _start_controller(self):
-        if self._ctrl_thread and self._ctrl_thread.is_alive():
-            return
+        # 确保旧线程已完全退出再启动新的
+        if self._ctrl_thread is not None:
+            if self._ctrl_thread.is_alive():
+                print("[bt_gamepad] old controller still alive, waiting...", flush=True)
+                self._ctrl_thread.stop()
+                self._ctrl_thread.join(timeout=2.0)
+                if self._ctrl_thread.is_alive():
+                    print("[bt_gamepad] WARNING: old controller won't die, replacing anyway", flush=True)
+            self._ctrl_thread = None
+
         self._ctrl_thread = ControllerThread()
         self._ctrl_thread.start()
         print("[bt_gamepad] controller started", flush=True)
 
     def _stop_controller(self):
         if self._ctrl_thread and self._ctrl_thread.is_alive():
+            print("[bt_gamepad] signalling controller to stop...", flush=True)
             self._ctrl_thread.stop()
-        self._ctrl_thread = None
-        print("[bt_gamepad] controller stopped", flush=True)
+        # 不 join、不设 None，让 _start_controller 负责等待和清理
+        print("[bt_gamepad] controller stop signalled", flush=True)
 
     # ---- 按键 ----
     def keyPressEvent(self, ev: QKeyEvent):

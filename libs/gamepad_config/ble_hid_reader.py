@@ -784,9 +784,31 @@ def decode_notification(report: bytes, layout: HidReportLayout) -> Optional[List
 
     if best_offset >= 0:
         data = report[best_offset:best_offset+layout.total_bytes]
-        return _decode_aligned(data, layout, ts)
+        events = _decode_aligned(data, layout, ts)
+        if events is not None:
+            # ESP32-BLE-Gamepad 面键补偿（对齐确定后执行，不影响评分）
+            #   高4位编码: bit4(0x10)→B(btn5), bit5(0x20)→A(btn6), bit6(0x40)→Y(btn7), bit7(0x80)→X(btn8)
+            _apply_esp32_face_buttons(data, layout, events, ts)
+        return events
 
     return None
+
+
+def _apply_esp32_face_buttons(data: bytes, layout, events: list, ts: float):
+    """ESP32-BLE-Gamepad 面键补偿：把 hat 字节高4位的面键映射为 btn5-8"""
+    if len(data) < 6:
+        return
+    if layout.button_start != 40:
+        return
+    std_buttons_high = data[5] & 0xF0
+    if std_buttons_high != 0:
+        return
+    face_raw = (data[4] >> 4) & 0x0F
+    if not face_raw:
+        return
+    for i in range(4):
+        pressed = bool(face_raw & (1 << i))
+        events.append(GamepadEvent('button', 5 + i, pressed, ts))
 
 
 def _decode_aligned(data: bytes, layout: HidReportLayout, ts: float) -> List[GamepadEvent]:
@@ -802,6 +824,9 @@ def _decode_aligned(data: bytes, layout: HidReportLayout, ts: float) -> List[Gam
             if byte_idx < len(data):
                 pressed = (data[byte_idx] >> bit_idx) & 1
                 events.append(GamepadEvent('button', btn + 1, pressed, ts))
+
+    # ESP32-BLE-Gamepad 面键补偿已移至 decode_notification 中执行
+    # 避免影响 _score_alignment 的对齐评分
 
     # 轴（按 bit_offset 升序排列保证 axis_index 稳定）
     sorted_axes = sorted(layout.axes, key=lambda f: f.bit_offset)

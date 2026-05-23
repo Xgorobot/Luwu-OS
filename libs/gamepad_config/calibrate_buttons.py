@@ -10,22 +10,29 @@ from ble_hid_reader import parse_report_map, decode_notification
 # ── 0. 清理旧 monitor 进程 ──
 mac = "04:25:0B:00:2B:C1"
 monitor_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ble_gatt_monitor.py")
-for line in os.popen(f"pgrep -f '{monitor_script} {mac}'").read().strip().split():
-    if line.isdigit():
-        try:
-            os.kill(int(line), signal.SIGTERM)
-            print(f"🔧 已清理旧 monitor 进程 (PID {line})")
-        except:
-            pass
-time.sleep(0.5)
+pids = os.popen(f"pgrep -f '{monitor_script} {mac}'").read().strip()
+if pids:
+    for line in pids.split():
+        if line.isdigit():
+            try:
+                os.kill(int(line), signal.SIGTERM)
+                print(f"已清理旧 monitor 进程 (PID {line})")
+            except:
+                pass
+    time.sleep(0.5)
 
 # ── 1. 准备 ──
+report_map = None
 for d in glob.glob("/sys/devices/virtual/misc/uhid/0005:*"):
     rp = d + "/report_descriptor"
     if os.path.exists(rp):
         with open(rp, "rb") as f:
             report_map = f.read().rstrip(b'\x00')
         break
+
+if not report_map:
+    print("错误: 找不到 uhid 设备！手柄可能未连接。")
+    sys.exit(1)
 
 layouts = parse_report_map(report_map)
 game_layout = None
@@ -60,18 +67,17 @@ while time.time() - t0 < 10:
         print("✅ 手柄已连接，开始校准\n")
         break
 
-# ── 3. 要校准的按键（页面上的名称） ──
+# ── 3. 要校准的按键（页面上的名称 → 期待物理键值） ──
+# 经实测: 面键在 byte7 高4位 → btn5-8, 肩键在 byte8 → btn1-2
 buttons_to_test = [
-    (0, "A 键"),
-    (1, "B 键"),
-    (2, "X 键"),
-    (3, "Y 键"),
-    (4, "LB (左肩键)"),
-    (5, "RB (右肩键)"),
-    (8, "Back (视图)"),
-    (9, "Start (菜单)"),
-    (10, "L3 (左摇杆按)"),
-    (11, "R3 (右摇杆按)"),
+    (6, "A 键"),         # 0x20 → face bit1 → btn6
+    (5, "B 键"),         # 0x10 → face bit0 → btn5
+    (8, "X 键"),         # 0x80 → face bit3 → btn8 (需要连续3包稳定)
+    (7, "Y 键"),         # 0x40 → face bit2 → btn7
+    (1, "LB (左肩键)"),   # HID usage 1
+    (2, "RB (右肩键)"),   # HID usage 2
+    (3, "Back (视图)"),   # HID usage 3
+    (4, "Start (菜单)"),  # HID usage 4
 ]
 
 results = []
@@ -105,10 +111,38 @@ for expected_idx, name in buttons_to_test:
         except:
             pass
 
-    print(f"  等待按键... (5秒超时)")
+    # 如果期望按键已在基线中（如 X/0x80 的空闲心跳），等待释放再重新捕获
+    if expected_idx in last_btns:
+        print(f"  ⚠️ btn{expected_idx} 已在基线（空闲心跳），等待释放...")
+        rel_start = time.time()
+        released = False
+        while time.time() - rel_start < 3:
+            line = readline_timeout(0.15)
+            if not line:
+                continue
+            try:
+                d = json.loads(line.strip())
+                if d.get("type") == "raw":
+                    cur = get_pressed_buttons(d["hex"])
+                    if expected_idx not in cur:
+                        last_btns = cur
+                        released = True
+                        break
+                    last_btns = cur
+            except:
+                pass
+        if not released:
+            last_btns.discard(expected_idx)
+            print(f"  (已手动从基线移除 btn{expected_idx})")
+
+    is_x_button = (expected_idx == 8)
+    timeout = 8 if is_x_button else 5
+    hint = " ⚠️ 请长按 X 键不要松手" if is_x_button else ""
+    print(f"  等待按键... ({timeout}秒超时){hint}")
     detected = None
     start = time.time()
-    while time.time() - start < 5:
+    
+    while time.time() - start < timeout:
         line = readline_timeout(0.15)
         if not line:
             continue
@@ -118,10 +152,28 @@ for expected_idx, name in buttons_to_test:
                 continue
             cur = get_pressed_buttons(d["hex"])
             new_btns = cur - last_btns
-            if new_btns:
-                detected = sorted(new_btns)
-                break
-            last_btns = cur
+            
+            if is_x_button:
+                # X 键特殊: 由于 0x80 与空闲心跳状态完全一致，
+                # 空闲时 5x80 与 4x80 会交替振荡，btn8 占比约 50%。
+                # 用户长按 X 键时，5x80 占比 > 80%。
+                # 策略: 记录最近 N=10 包中 btn8 占比，>=70% 判定为按下
+                if not hasattr(get_pressed_buttons, '_x_window'):
+                    get_pressed_buttons._x_window = []
+                w = get_pressed_buttons._x_window
+                w.append(expected_idx in cur)
+                if len(w) > 10:
+                    w.pop(0)
+                if len(w) >= 10 and sum(w) / len(w) >= 0.7:
+                    detected = [expected_idx]
+                    break
+                last_btns = cur
+            else:
+                # 普通按键: 新出现即可
+                if new_btns:
+                    detected = sorted(new_btns)
+                    break
+                last_btns = cur
         except:
             pass
 
@@ -132,7 +184,13 @@ for expected_idx, name in buttons_to_test:
         results.append((name, expected_idx, phys, phys == expected_idx))
     else:
         print(f"  结果: ⏭️ 超时，未检测到按键")
+        if is_x_button:
+            print(f"      提示: X 键需长按 1.5秒以上（固件限制）")
         results.append((name, expected_idx, -1, False))
+    
+    # 清理 X 键状态
+    if hasattr(get_pressed_buttons, '_x_window'):
+        get_pressed_buttons._x_window = []
 
 # ── 5. 清理 ──
 proc.terminate()

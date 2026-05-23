@@ -243,8 +243,15 @@ class XGOController:
                 log.debug(f"  {path}: 打开失败 {e}")
         if candidates:
             candidates.sort(key=lambda x: x[0])
+            best_priority = candidates[0][0]
+            # 只有真正的游戏手柄 (priority=0, 有 BTN_SOUTH) 才返回；
+            # 触摸板/consumer control 等非手柄设备在重连时可能先出现，
+            # 返回它们会导致控制器卡在错误设备上，真正的游戏手柄事件无人读取。
+            if best_priority > 0:
+                log.debug(f"只找到非手柄设备 (priority={best_priority})，等待真正的手柄...")
+                return None
             dev = candidates[0][1]
-            log.info(f"找到手柄: {dev.name} ({dev.path}) [priority={candidates[0][0]}]")
+            log.info(f"找到手柄: {dev.name} ({dev.path}) [priority={best_priority}]")
             return dev
         return None
 
@@ -932,6 +939,11 @@ class XGOController:
     def _run_evdev_loop(self, dev):
         """标准 evdev 手柄循环（原有逻辑抽取）"""
         import evdev
+        # 双重确认：设备必须有游戏手柄按键能力（BTN_SOUTH=304）
+        key_caps = dev.capabilities().get(evdev.ecodes.EV_KEY, [])
+        if 304 not in key_caps:
+            log.warning(f"[evdev] {dev.name} 缺少 BTN_SOUTH，不是游戏手柄，跳过")
+            return
         try:
             abs_info = {}
             for code in AXIS_MAP:

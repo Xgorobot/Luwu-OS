@@ -89,14 +89,9 @@ RIDER_ONE_SHOT = _COMMON_ONE_SHOT + [
 ]
 # Rider action 中文名
 RIDER_ACTION_NAMES = {
-    1: "高低起伏", 2: "前进后退", 3: "匍匐前进", 4: "四方蛇形",
-    5: "升降旋转", 6: "蹲起", 7: "转动Roll", 8: "转动Pitch",
-    9: "转动Yaw", 10: "三轴转动", 11: "撒尿", 12: "坐下",
-    13: "招手", 14: "伸懒腰", 15: "波浪", 16: "摇摆",
-    17: "乞讨", 18: "找食物", 19: "握手", 20: "鸡头",
-    21: "俯卧撑", 22: "张望", 23: "动作23", 24: "调皮",
-    128: "上抓", 129: "动作129", 130: "下抓", 144: "上楼梯",
-    255: "复位",
+    # Rider 固件仅支持 1~6，超出范围静默忽略
+    1: "左右摇摆", 2: "高低起伏", 3: "前进后退",
+    4: "四方蛇形", 5: "升降旋转", 6: "圆周晃动",
 }
 RIDER_HOLD = ["rider_forward", "rider_back", "rider_turn_left", "rider_turn_right", "roll_left", "roll_right"]
 RIDER_AXIS = ["none", "rider_axis_x", "rider_axis_yaw", "rider_roll_axis"]
@@ -264,6 +259,15 @@ def gamepad_events():
         }
     )
 
+@app.route("/shutdown", methods=["GET", "POST"])
+def shutdown():
+    """werkzeug 内部 shutdown，由 stop_server() 调用"""
+    func = request.environ.get("werkzeug.server.shutdown")
+    if func:
+        func()
+    return "OK"
+
+
 @app.route("/<path:filename>")
 def static_files(filename):
     """静态文件"""
@@ -274,11 +278,13 @@ def static_files(filename):
 
 _server_thread = None
 _server_running = False
+_server_port = 8088
 
 
 def _run_server(port=8088):
-    global _server_running
+    global _server_running, _server_port
     _server_running = True
+    _server_port = port
     print(f"[mapping_server] 启动在 http://0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
@@ -298,9 +304,16 @@ def start_server(port=8088):
 
 
 def stop_server():
-    """停止服务器（daemon 线程会自动随进程退出，这里仅标记）"""
+    """真正停止 Flask，向自身发送 /shutdown 请求触发 werkzeug 退出"""
     global _server_running
     _server_running = False
+    try:
+        import urllib.request
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{_server_port}/shutdown", timeout=2
+        )
+    except Exception:
+        pass
     print("[mapping_server] 已停止")
 
 

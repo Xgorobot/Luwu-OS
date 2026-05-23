@@ -3,7 +3,7 @@
 
 <head>
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <title>LwuDynamic</title>
     <script src="{{ url_for('static',filename='socket.io.js') }}"></script>
@@ -16,33 +16,30 @@
         <div class="balance" onclick = "socket.emit('balance','1')">Balance</div>
     </div>
     <div class="main">
-        <img id="videoStream" src="{{ url_for('video_feed') }}" width="640" height="480">
+        <img id="videoStream" src="{{ url_for('video_feed') }}" alt="video">
     </div>
     <div class="footer">
-        <div class="action-div">
-            <div onclick = "socket.emit('action','1')">
-                <img src="{{url_for('static' , filename='./images/tool-action.png')}}" alt="">
-                <span>Action</span>
+        <div class="control-top-row">
+            <div class="joystick-container">
+                <div class="joystick-btn up" >&#8593;</div>
+                <div class="joystick-btn left">&#8592;</div>
+                <div class="joystick-btn right">&#8594;</div>
+                <div class="joystick-btn down">&#8595;</div>
+            </div>
+            <div class="action-div">
+                <div onclick = "socket.emit('action','1')">
+                    <img src="{{url_for('static' , filename='./images/tool-action.png')}}" alt="">
+                    <span>Action</span>
+                </div>
             </div>
         </div>
-        <ul class="control-buttons">
-            <li onclick = "socket.emit('PushUp','21')">PushUp</li>
-            <li onclick = "socket.emit('TakeAPee','11')">TakeAPee</li>
-            <li onclick = "socket.emit('WaveHand','19')">WaveHand</li>
-            <li onclick = "socket.emit('UpDown','6')">UpDown</li>
-            <li onclick = "socket.emit('LookFood','17')">LookFood</li>
-            <li onclick = "socket.emit('Dance','23')">Dance</li>
-        </ul>
+        <div id="action-table" class="action-table">
+            <!-- 动态加载 -->
+        </div>
         <div class="height-control">
             <span>Height</span>
             <input type="range" min="0" max="100" value="50" id="height-slider">
             <span class="value-display">50%</span>
-        </div>
-        <div class="joystick-container">
-            <div class="joystick-btn up" >↑</div>
-            <div class="joystick-btn left">←</div>
-            <div class="joystick-btn right">→</div>
-            <div class="joystick-btn down">↓</div>
         </div>
     </div>
     <script>
@@ -53,8 +50,55 @@
           pingTimeout: 5000,
           pingInterval: 10000
         });
-        
-        // 改进的移动控制状态管理
+
+        // ===== 动态 action 列表（根据设备类型） =====
+        const ACTIONS = {
+            rider: [
+                {id: 1, name: '左右摇摆', time: '3s'},
+                {id: 2, name: '高低起伏', time: '4s'},
+                {id: 3, name: '前进后退', time: '3s'},
+                {id: 4, name: '四方蛇形', time: '4s'},
+                {id: 5, name: '升降旋转', time: '6s'},
+                {id: 6, name: '圆周晃动', time: '5s'},
+            ],
+            dog: [
+                {id: 1,  name: 'Perform',  time: '-'},
+                {id: 6,  name: 'UpDown',   time: '4s'},
+                {id: 11, name: 'TakeAPee', time: '7s'},
+                {id: 17, name: 'LookFood', time: '4s'},
+                {id: 19, name: 'WaveHand', time: '10s'},
+                {id: 21, name: 'PushUp',   time: '8s'},
+                {id: 23, name: 'Dance',    time: '6s'},
+                {id: 24, name: 'Stretch',  time: '7s'},
+            ]
+        };
+
+        function renderActions(deviceType) {
+            const table = document.getElementById('action-table');
+            const actions = ACTIONS[deviceType] || ACTIONS['dog'];
+            let html = '';
+            for (const a of actions) {
+                html += `<div class="action-row" onclick="socket.emit('do_action','${a.id}')">`
+                       + `<span>${a.id}</span>`
+                       + `<span>${a.name}</span>`
+                       + `<span>${a.time}</span>`
+                       + `</div>`;
+            }
+            table.innerHTML = html;
+        }
+
+        // 页面加载时请求设备类型
+        fetch('/api/device_info')
+            .then(r => r.json())
+            .then(data => {
+                renderActions(data.type);
+                console.log('[rc] device type:', data.type);
+            })
+            .catch(() => {
+                renderActions('dog');
+            });
+
+        // ===== 移动控制状态管理 =====
         const moveControl = {
             active: false,
             currentDirection: null,
@@ -63,10 +107,8 @@
             lastEventType: null,
             
             start: function(direction, button, eventType) {
-                // 过滤重复事件类型
                 if (this.lastEventType === eventType) return;
                 this.lastEventType = eventType;
-
                 if (this.active && this.currentDirection === direction) return;
                 
                 this.stop(); 
@@ -74,7 +116,6 @@
                 this.currentDirection = direction;
                 
                 if (button) button.style.background = "rgba(255, 255, 255, 0.5)";
-                
                 this.sendCommand();
             
                 setTimeout(() => {
@@ -101,7 +142,6 @@
             
             sendCommand: function() {
                 if (!this.active || !this.currentDirection) return;
-                console.log(`Moving ${this.currentDirection}`);
                 switch (this.currentDirection) {
                     case 'up': socket.emit('up', '12'); break;
                     case 'down': socket.emit('down', '-12'); break;
@@ -111,7 +151,7 @@
             }
         };
 
-        // 改进的按钮事件处理
+        // ===== 按钮事件处理 =====
         function setupButton(button, direction) {
             let isProcessing = false;
             
@@ -119,10 +159,8 @@
                 if (isProcessing) return;
                 isProcessing = true;
                 e.preventDefault();
-                
                 const eventType = e.type === 'touchstart' ? 'touch' : 'mouse';
                 moveControl.start(direction, button, eventType);
-                
                 setTimeout(() => isProcessing = false, 50);
             };
 
@@ -132,7 +170,6 @@
                 isProcessing = false;
             };
 
-            // 事件绑定
             button.addEventListener('mousedown', handleStart, {passive: false});
             button.addEventListener('touchstart', handleStart, {passive: false});
             button.addEventListener('mouseup', handleEnd, {passive: false});
@@ -141,40 +178,36 @@
             button.addEventListener('touchcancel', handleEnd, {passive: false});
         }
 
-        // 初始化所有方向按钮
+        // 初始化方向按钮
         const directions = {
             up: document.querySelector('.up'),
             down: document.querySelector('.down'),
             left: document.querySelector('.left'),
             right: document.querySelector('.right')
         };
-
         Object.entries(directions).forEach(([direction, button]) => {
             setupButton(button, direction);
         });
 
-        // 连接状态处理
+        // ===== 连接状态 =====
         socket.on('connect', function () {
             console.log('Connected to server');
         });
-        
         socket.on('disconnect', function () {
             console.log('Disconnected from server');
             moveControl.stop();
         });
-        
         socket.on('error', function (data) {
             console.error('Socket error:', data);
         });
-        
-        // 高度控制相关函数
+
+        // ===== 高度控制 =====
         const minActual = 30;
         const maxActual = 75;
         
         function displayToActual(displayValue) {
             return Math.round(minActual + (maxActual - minActual) * displayValue / 100);
         }
-        
         function actualToDisplay(actualValue) {
             return Math.round((actualValue - minActual) * 100 / (maxActual - minActual));
         }
@@ -185,12 +218,10 @@
             valueDisplay.textContent = displayValue + '%';
         });
 
-        // 高度控制
         const heightSlider = document.getElementById('height-slider');
         const valueDisplay = document.querySelector('.value-display');
         
-        // 初始化滑块值
-        heightSlider.value = actualToDisplay(50); // 默认中间值
+        heightSlider.value = actualToDisplay(50);
         valueDisplay.textContent = heightSlider.value + '%';
         
         heightSlider.addEventListener('input', function() {
@@ -200,26 +231,11 @@
             socket.emit('height', actualValue);
         });
 
-        // 全局事件处理
+        // ===== 全局事件 =====
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                moveControl.stop();
-            }
+            if (document.hidden) { moveControl.stop(); }
         });
-
-        window.addEventListener('blur', () => {
-            moveControl.stop();
-        });
-
-        // 页面加载完成后调整高度控制位置
-        document.addEventListener('DOMContentLoaded', () => {
-            const heightControl = document.querySelector('.height-control');
-            heightControl.style.position = "absolute";
-
-            setTimeout(() => {
-                heightControl.style.right = "5%"; 
-            }, 500);
-        });
+        window.addEventListener('blur', () => { moveControl.stop(); });
     </script>
 </body>
 </html>

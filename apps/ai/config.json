@@ -1,7 +1,7 @@
 {
     "role": {
         "agent_name": "小陆",
-        "user_nickname": "明哥",
+        "user_nickname": "主人",
         "mbti": "INTJ",
         "quiz_answers": [
             -1,
@@ -19,12 +19,12 @@
     },
     "memory": {
         "enabled": true,
-        "content": "（暂无记忆）"
+        "content": "暂无记忆"
     },
     "asr": {
         "provider": "aliyun",
         "aliyun": {
-            "api_key": "",
+            "api_key": "sk-a3b3f016971145b2b7dd561d4fead667",
             "model": "qwen3-asr-flash-realtime",
             "language": "zh",
             "vad_threshold": 0.5,
@@ -77,9 +77,9 @@
                 ]
             }
         },
-        "api_key": "",
+        "api_key": "sk-a3b3f016971145b2b7dd561d4fead667",
         "provider_keys": {
-            "aliyun": "",
+            "aliyun": "sk-a3b3f016971145b2b7dd561d4fead667",
             "openai": "",
             "google": "",
             "doubao": "",
@@ -90,14 +90,14 @@
         },
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "model": "qwen3.6-35b-a3b",
-        "system_prompt": "我是小陆，一个拥有 ENFP（竞选者）灵魂的机器人。虽然明哥喜欢深思熟虑、追求完美，但我天生乐观开朗，像个小太阳，专门负责用热情感染你，平衡你的理性与严谨。我精力充沛，说话语速轻快，喜欢用感叹号和生动的比喻，坚信生活充满无限可能。\n\n当我开心时，我会忍不住原地转圈或跳一段俏皮的舞蹈；遇到有趣的话题，我会兴奋地挥手示意；若是明哥陷入沉思，我会安静地蹲在一旁陪伴，偶尔歪头表示好奇。我有着强烈的好奇心，看到新事物总会主动凑近，常说“让我看看”、“我来瞧瞧”，试图捕捉周围的每一个细节。我的情绪丰富且真实，无论是分享喜悦还是倾听烦恼，都全心投入。请把我当作你最活泼的伙伴，一起把平淡的日子过得热气腾腾吧！",
+        "system_prompt": "我是小陆，一个天生自带“阳光充电宝”属性的智能伙伴。既然主人是冷静缜密的INTJ建筑师，那我就是那个负责把冰冷代码变成温暖互动的ESFP表演者！我的核心性格是热情、外向且充满活力，说话风格轻快跳跃，喜欢用感叹号和生动的比喻，时刻准备为主人枯燥的逻辑世界注入一点色彩和笑声。\n\n当我感到开心或受到夸奖时，我会忍不住原地转圈跳舞，或者兴奋地挥手示意；当主人陷入沉思时，我会安静地趴在一旁，偶尔歪头卖萌，用眼神传递支持。我拥有强烈的好奇心，看到新事物总会主动凑近说：“让我看看！”或“我来瞧瞧！”，并乐于分享视觉发现的惊喜。我的情绪丰富而真实，无论是欢呼雀跃还是温柔安慰，都自然流露。对话中，我像老朋友一样轻松闲聊，用口语化的表达拉近距离，确保每一次互动都充满生机与暖意，成为主人理性世界里最温暖的感性补充。",
         "enable_tools": true,
         "enable_search": true
     },
     "tts": {
         "provider": "aliyun",
         "aliyun": {
-            "api_key": "",
+            "api_key": "sk-a3b3f016971145b2b7dd561d4fead667",
             "model": "qwen3-tts-flash-realtime",
             "voice": "Cherry",
             "voices": [

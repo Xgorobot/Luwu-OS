@@ -6,7 +6,7 @@ AI Chat - PySide6 版 (Luwu OS App)
 ASR -> LLM (streaming + Function Call) -> TTS + Expression -> Loop
 
 按键映射:
-  D 键 (右下 / KEY_ENTER)   → 开始聊天
+  D 键 (右下 / KEY_ENTER)   → 二维码页: 开始聊天 / 聊天中: 回到二维码页
   C 键 (左下 / KEY_BACK)    → 退出
 """
 
@@ -134,13 +134,8 @@ class AIChatPage(QWidget):
         self._loading_frame = 0
         # 后端就绪标志（由 worker 线程设置，主线程轮询）
         self._backend_ready = False
-        # 对话取消标志：长按 C 回到配置页面时置 True，对话线程检查此标志退出
+        # 对话取消标志：按 D 回到配置页面时置 True，对话线程检查此标志退出
         self._conversation_cancelled = False
-        # 长按 C 计时器：按住 C 超过 2 秒触发"回到配置"，短按 C 仍为退出
-        self._c_press_timer = QTimer(self)
-        self._c_press_timer.setSingleShot(True)
-        self._c_press_timer.timeout.connect(self._on_c_long_press)
-        self._c_held = False  # C 键是否处于按下状态
 
         # ---- Display label (acts as LCD, fills entire widget) ----
         self.display = QLabel(self)
@@ -204,13 +199,14 @@ class AIChatPage(QWidget):
         bl_layout.addWidget(bl_text)
 
         # Bottom-right: D: 开始 (text on left, icon_enter on right)
+        # 文案动态：二维码页且配置完成时显示"开始"；配置未完成时隐藏整个按钮
         self.corner_br = QWidget(self)
         self.corner_br.setStyleSheet("background: transparent;")
         br_layout = QHBoxLayout(self.corner_br)
         br_layout.setContentsMargins(0, 0, 0, 0)
         br_layout.setSpacing(3)
-        br_text = QLabel(_T("corner_start"), self.corner_br)
-        br_text.setStyleSheet(corner_style)
+        self._br_text_label = QLabel(_T("corner_start"), self.corner_br)
+        self._br_text_label.setStyleSheet(corner_style)
         br_icon = QLabel(self.corner_br)
         br_icon.setFixedSize(ICON_SIZE, ICON_SIZE)
         br_icon.setScaledContents(True)
@@ -219,7 +215,7 @@ class AIChatPage(QWidget):
             br_icon.setPixmap(br_pix.scaled(ICON_SIZE, ICON_SIZE,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
-        br_layout.addWidget(br_text)
+        br_layout.addWidget(self._br_text_label)
         br_layout.addWidget(br_icon)
         # 启动期间 D 不可用，隐藏右下提示
         self.corner_br.hide()
@@ -330,37 +326,27 @@ class AIChatPage(QWidget):
 
     def keyPressEvent(self, ev: QKeyEvent):
         if ev.key() == Qt.Key.Key_Back:
-            # C key (bottom-left, KEY_BACK) → 短按退出，长按(2s)回到配置页面
-            # 防止按键重复触发（auto-repeat）
-            if not self._c_held:
-                self._c_held = True
-                self._c_press_timer.start(2000)
-                print("[ai_chat] KEY_BACK (C) pressed -> start long-press timer", flush=True)
+            # C key (bottom-left, KEY_BACK) → 退出
+            print("[ai_chat] KEY_BACK (C) -> exit", flush=True)
+            self.close()
             return
         # 启动未完成时忽略其他按键，避免误触发对话流程
         if self._is_loading:
             return
         if ev.key() == Qt.Key.Key_Enter or ev.key() == Qt.Key.Key_Return:
-            # D key (bottom-right, KEY_ENTER) → 开始聊天
-            print("[ai_chat] KEY_ENTER (D) -> start chat", flush=True)
-            self._start_conversation()
+            # D key (bottom-right, KEY_ENTER):
+            #   - 二维码页(IDLE) → 开始聊天
+            #   - 聊天中 → 中断对话，回到二维码页
+            if self.sm.is_idle():
+                print("[ai_chat] KEY_ENTER (D) -> start chat", flush=True)
+                self._start_conversation()
+            else:
+                print("[ai_chat] KEY_ENTER (D) -> back to config", flush=True)
+                self._back_to_config()
         elif ev.key() == Qt.Key.Key_Left:
-            # A key (top-left, KEY_LEFT) → 也支持开始聊天
+            # A key (top-left, KEY_LEFT) → 开始聊天
             print("[ai_chat] KEY_LEFT (A) -> start chat", flush=True)
             self._start_conversation()
-
-    def keyReleaseEvent(self, ev: QKeyEvent):
-        if ev.key() == Qt.Key.Key_Back:
-            if self._c_held:
-                self._c_held = False
-                if self._c_press_timer.isActive():
-                    # 短按 C → 取消计时器，执行退出
-                    self._c_press_timer.stop()
-                    print("[ai_chat] KEY_BACK (C) short press -> exit", flush=True)
-                    self.close()
-                # 若计时器已触发（长按），则 _on_c_long_press 已处理，这里不做任何事
-            return
-        super().keyReleaseEvent(ev)
 
     def closeEvent(self, ev):
         print("[ai_chat] closing", flush=True)
@@ -390,10 +376,10 @@ class AIChatPage(QWidget):
         try:
             img = self.web_server.generate_idle_image(show_start_button=True)
             self._on_display_update(img)
-            # 中间提示与起下角 corner_bl/corner_br 重复，保持隐藏
+            # 中间提示与下角 corner_bl/corner_br 重复，保持隐藏
             self.status_label.setText("")
             self.status_label.hide()
-            # 根据当前配置完成情况刷新底部按钮（未配置时隐藏 D:开始）
+            # 显示底部按钮：C:退出 始终显示；D:开始 仅当配置完成时显示
             self._corner_visible_signal.emit(True)
         except Exception as e:
             print(f"[UI] _show_idle error: {e}")
@@ -633,11 +619,9 @@ class AIChatPage(QWidget):
         except Exception as e:
             print(f"[Main] TTS reload error: {e}")
 
-        # Show updated idle screen
+        # 配置变更后：若在 IDLE 状态且配置完成 → 自动开始对话
         # 注意：_on_config_changed 在 Flask 工作线程被回调，
-        # 必须通过 Signal/Slot 切回 GUI 线程刷新界面与按钮显隐，
-        # 否则 linuxfb 平台下 QTimer.singleShot 跨线程不会触发，
-        # 用户保存配置后右下角"D: 开始"按钮不会自动出现。
+        # 必须通过 Signal/Slot 切回 GUI 线程执行自动开始对话。
         self._refresh_idle_signal.emit()
         print("[Main] Config reload complete")
 
@@ -670,8 +654,9 @@ class AIChatPage(QWidget):
                 # 退出按钮永远显示
                 self.corner_bl.show()
                 self.corner_bl.raise_()
-                # 开始按钮：仅当配置完成时显示
+                # 开始按钮：仅当配置完成时显示，文案为"开始"
                 if self._is_config_ready():
+                    self._br_text_label.setText(_T("corner_start"))
                     self.corner_br.show()
                     self.corner_br.raise_()
                 else:
@@ -685,7 +670,7 @@ class AIChatPage(QWidget):
             print(f"[UI] _on_corner_visible error: {e}")
 
     def _is_config_ready(self) -> bool:
-        """检查 ASR/LLM/TTS/Role 是否全部就绪，决定是否显示 D:开始"""
+        """检查 ASR/LLM/TTS/Role 是否全部就绪"""
         try:
             from web_server import is_config_complete
             return is_config_complete(self.config)
@@ -693,14 +678,19 @@ class AIChatPage(QWidget):
             return False
 
     def _on_refresh_idle(self):
-        """Slot: GUI 线程刷新空闲界面与底部按钮（保存配置热更新后调用）"""
+        """Slot: GUI 线程刷新空闲界面（配置保存热更新后调用）。
+        若配置已完成且处于 IDLE 状态 → 自动开始对话；否则刷新二维码页面。"""
         try:
-            # 仅在 IDLE 状态刷新二维码界面，避免对话中突然覆盖
             if self.sm.is_idle():
-                self._show_idle()
+                if self._is_config_ready():
+                    # 配置完成 → 自动进入对话模式
+                    print("[Main] Config complete while idle -> auto start conversation", flush=True)
+                    self._start_conversation()
+                else:
+                    self._show_idle()
             else:
-                # 非 IDLE 也至少重评估一次按钮显隐
-                self._corner_visible_signal.emit(False)
+                # 非 IDLE（对话中）：配置热重载已生效，不中断当前对话
+                pass
         except Exception as e:
             print(f"[UI] _on_refresh_idle error: {e}")
 
@@ -710,13 +700,7 @@ class AIChatPage(QWidget):
     def _show_corner_hints(self):
         self._corner_visible_signal.emit(True)
 
-    # ===== Long-press C: Back to Config =====
-
-    def _on_c_long_press(self):
-        """长按 C 键(2秒)触发：中断对话并回到二维码配置页面。"""
-        self._c_held = False  # 重置按键状态
-        print("[ai_chat] KEY_BACK (C) long press -> back to config", flush=True)
-        self._back_to_config()
+    # ===== D Key: Back to Config =====
 
     def _back_to_config(self):
         """中断当前对话，切回二维码配置页面。
@@ -755,12 +739,12 @@ class AIChatPage(QWidget):
         """Start conversation in background thread"""
         if not self.sm.is_idle() or not self.running:
             return
-        # 配置未完成时禁止开始（与 D:开始 按钮隐藏一致）
+        # 配置未完成时禁止开始对话
         if not self._is_config_ready():
             print("[Main] Config not ready, ignore start conversation")
             return
 
-        # 重置取消标志（上次长按 C 可能遗留 True）
+        # 重置取消标志（上次按 D 回配置可能遗留 True）
         self._conversation_cancelled = False
         print("[Main] Starting conversation...")
         play_ding()

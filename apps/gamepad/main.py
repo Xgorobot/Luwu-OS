@@ -175,10 +175,13 @@ class GamepadApp(QStackedWidget):
                     self._do_close()
                 return True  # 消费事件，子页面不处理
             elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                print(f"[gamepad] D -> toggle mode (current={self._mode})",
-                      flush=True)
-                self._toggle_mode()
-                return True  # 消费事件
+                # 仅在 joystick 模式下 D 键切换为蓝牙模式；
+                # 蓝牙模式下放行，让子页面处理重新扫描
+                if self._mode == "joystick":
+                    print(f"[gamepad] D -> toggle mode (current={self._mode})",
+                          flush=True)
+                    self._toggle_mode()
+                    return True  # 消费事件
         return super().eventFilter(watched, event)
 
     # ── 页面切换 ──────────────────────────────────────────────

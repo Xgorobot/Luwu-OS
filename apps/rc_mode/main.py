@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QFrame,
 )
 
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 from flask_socketio import SocketIO, emit
 from picamera2 import Picamera2
 from concurrent.futures import ThreadPoolExecutor
@@ -216,6 +216,16 @@ def video_feed():
     )
 
 
+@flask_app.route("/api/device_info")
+def api_device_info():
+    """返回当前设备类型，前端据此动态渲染 action 列表。"""
+    if isinstance(dog, XGO_RIDER):
+        device_type = "rider"
+    else:
+        device_type = "dog"
+    return jsonify({"type": device_type})
+
+
 # ---- 连接状态（线程安全） ----
 _connected_clients = 0
 _conn_lock = threading.Lock()
@@ -263,33 +273,8 @@ def handle_action(data):
     executor.submit(execute_action, dog.perform, int(data))
 
 
-@socketio.on("PushUp")
-def handle_pushup(data):
-    executor.submit(execute_action, dog.action, int(data))
-
-
-@socketio.on("TakeAPee")
-def handle_takeapee(data):
-    executor.submit(execute_action, dog.action, int(data))
-
-
-@socketio.on("WaveHand")
-def handle_wavehand(data):
-    executor.submit(execute_action, dog.action, int(data))
-
-
-@socketio.on("UpDown")
-def handle_updown(data):
-    executor.submit(execute_action, dog.action, int(data))
-
-
-@socketio.on("LookFood")
-def handle_lookfood(data):
-    executor.submit(execute_action, dog.action, int(data))
-
-
-@socketio.on("Dance")
-def handle_dance(data):
+@socketio.on("do_action")
+def handle_do_action(data):
     executor.submit(execute_action, dog.action, int(data))
 
 
