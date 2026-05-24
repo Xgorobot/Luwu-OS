@@ -1,921 +1,449 @@
 #!/usr/bin/env python3
 """
-PySide6 手柄控制 (Joystick Control) — 由 Luwu OS launcher 启动。
-读取 /dev/input/js* 手柄设备，控制 XGO 机器狗运动。
-C 键（左下物理键 → KEY_BACK）退出。
+PySide6 2.4G 遥控 — Luwu OS 统一手柄控制。
+使用 gamepad_controller 读取 evdev 手柄设备，控制 XGO 机器狗。
+
+与蓝牙页面共享同一套 UI 风格（居中布局 + 状态驱动）。
+
+按键：
+- C 键（Key_Back）：退出
+- D 键（Key_Return）：切换蓝牙模式（由 gamepad 入口拦截）
+- A 键（Key_Left）：键位映射 QR 页
 """
+import os
 import sys
 import time
-import struct
 import signal
 import threading
 
 # ===================== 阶段计时 =====================
 T0 = time.monotonic()
-_stages = []
 
 
 def mark(name: str):
     ms = (time.monotonic() - T0) * 1000.0
-    _stages.append((name, ms))
     print(f"[joystick][+{ms:7.1f}ms] {name}", flush=True)
 
 
 mark("python entry")
 
 # ===================== PySide6 =====================
-from PySide6.QtCore import Qt, QTimer, QPointF
-from PySide6.QtGui import QFont, QKeyEvent, QColor, QPainter, QPen, QBrush
+from PySide6.QtCore import Qt, QTimer, Signal, QThread
+from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QLabel,
-    QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
+    QApplication, QWidget, QLabel, QVBoxLayout, QFrame,
 )
 
 mark("PySide6 import done")
-
-# ===================== 狗库 =====================
-sys.path.insert(0, "/home/pi/lib")
-from xgolib import XGO, XGO_RIDER
-
-mark("xgolib import done")
 
 # ===================== 主题 =====================
 if "/home/pi/luwu-os" not in sys.path:
     sys.path.insert(0, "/home/pi/luwu-os")
 
-from libs.theme import apply_app_palette, Asset, Color as T, ColorRGB
-from libs.theme import qss as T_qss
-from libs.theme.tokens import Font, Spacing, Radius
-from libs.ui import AppFrame
+from libs.theme import (  # noqa: E402
+    apply_app_palette, Asset as T_Asset, Color as T_Color,
+    Spacing, qss as T_qss,
+)
+from libs.ui import AppFrame  # noqa: E402
+from libs.ui.frame import _invisible_cursor  # noqa: E402
+from libs.i18n import Translator as _Translator  # noqa: E402
 
 mark("theme import done")
 
+# ===================== 键位映射相关 =====================
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+
+# mapping_server 和 qr_page 统一从 bluetooth_gamepad 目录导入
+# 与蓝牙页面共享同一个 mapping_server 模块实例，避免端口/全局状态冲突
+_BT_GAMEPAD_DIR = "/home/pi/luwu-os/apps/bluetooth_gamepad"
+if _BT_GAMEPAD_DIR not in sys.path:
+    sys.path.insert(0, _BT_GAMEPAD_DIR)
+import mapping_server  # noqa: E402
+from qr_page import QRMappingPage  # noqa: E402
+
+mark("mapping imports done")
+
 # ===================== i18n =====================
-try:
-    from libs.i18n import Translator as _Translator
-    _T = _Translator({
-        "cn": {
-            "title": "手柄控制",
-            "joystick_connected": "手柄 已连接",
-            "joystick_disconnected": "手柄 未连接",
-            "dog_ready": "机器狗 就绪",
-            "dog_offline": "机器狗 离线",
-            "step": "步幅",
-            "pace": "步频",
-            "height": "高度",
-            "pace_slow": "慢",
-            "pace_med": "中",
-            "pace_fast": "快",
-            "hint_exit": "退出",
-            "hint_action": "START:复位  SELECT:跨障",
-        },
-        "en": {
-            "title": "Gamepad",
-            "joystick_connected": "Pad: Connected",
-            "joystick_disconnected": "Pad: Disconnected",
-            "dog_ready": "Dog: Ready",
-            "dog_offline": "Dog: Offline",
-            "step": "Step",
-            "pace": "Pace",
-            "height": "Height",
-            "pace_slow": "Slow",
-            "pace_med": "Med",
-            "pace_fast": "Fast",
-            "hint_exit": "Exit",
-            "hint_action": "START:Reset  SELECT:Climb",
-        },
-    })
-except Exception:
-    _T = lambda k, *a: k
+_T = _Translator({
+    "cn": {
+        "title": "2.4G 遥控",
+        "init": "正在初始化 2.4G 遥控...",
+        "connected": "2.4G 已连接",
+        "ready": "手柄就绪，正在控制机器狗",
+        "disconnected": "2.4G 未连接，请插入接收器",
+        "hint_exit": "退出",
+        "hint_mapping": "键位映射",
+        "hint_bt": "D 切换蓝牙",
+        "key_mapping": "键位映射",
+        "back": "返回",
+    },
+    "en": {
+        "title": "2.4G Remote",
+        "init": "Initializing 2.4G remote...",
+        "connected": "2.4G Connected",
+        "ready": "Gamepad ready, controlling robot",
+        "disconnected": "2.4G Disconnected, insert receiver",
+        "hint_exit": "Exit",
+        "hint_mapping": "Key Map",
+        "hint_bt": "D BT Mode",
+        "key_mapping": "Key Mapping",
+        "back": "Back",
+    },
+})
 
 # ===================== 常量 =====================
-AUTO_EXIT_SEC = 600  # 10 分钟无操作自动退出
+AUTO_EXIT_SEC = 1800  # 30 分钟无操作自动退出
+_LAUNCHER_ASSETS = os.path.dirname(T_Asset.bg_image)
+DEMO_ICON = os.path.join(_LAUNCHER_ASSETS, "demo_gamepad.png")
+_APP_BG_IMAGE = "/home/pi/luwu-os/assets/images/app_bg.png"
+
+# ===================== XGO 单例 =====================
+_xgo_instance = None
+_xgo_device_type = None
 
 
-# ===================== 手柄读取类 =====================
-class JoystickReader:
-    """读取 Linux /dev/input/js* 手柄设备。"""
-
-    BUTTON_NAMES = {
-        0x0100: "A",
-        0x0101: "B",
-        0x0102: "X",
-        0x0103: "Y",
-        0x0104: "L1",
-        0x0105: "R1",
-        0x0106: "SELECT",
-        0x0107: "START",
-        0x0108: "MODE",
-        0x0109: "BTN_RK1",
-        0x010A: "BTN_RK2",
-    }
-
-    AXIS_NAMES = {
-        0x0200: "RK1_LEFT_RIGHT",
-        0x0201: "RK1_UP_DOWN",
-        0x0202: "L2",
-        0x0203: "RK2_LEFT_RIGHT",
-        0x0204: "RK2_UP_DOWN",
-        0x0205: "R2",
-        0x0206: "WSAD_LEFT_RIGHT",
-        0x0207: "WSAD_UP_DOWN",
-    }
-
-    def __init__(self, js_id=0):
-        self._js_id = js_id
-        self._jsdev = None
-        self._connected = False
-        self._running = False
-        self._thread = None
-        self._last_reconnect_attempt = 0
-
-        self.button_states = {name: 0 for name in self.BUTTON_NAMES.values()}
-        self.axis_states = {name: 0.0 for name in self.AXIS_NAMES.values()}
-
-        self._try_open()
-
-    def _try_open(self):
-        js_path = f"/dev/input/js{self._js_id}"
-        try:
-            self._jsdev = open(js_path, "rb")
-            self._connected = True
-            print(f"[joystick] 手柄已连接: {js_path}", flush=True)
-        except Exception:
-            self._connected = False
-            print(f"[joystick] 未找到手柄: {js_path}", flush=True)
-
-    @property
-    def connected(self):
-        return self._connected
-
-    def start(self):
-        if not self._connected:
-            return
-        self._running = True
-        self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-        if self._jsdev:
-            try:
-                self._jsdev.close()
-            except Exception:
-                pass
-            self._jsdev = None
-        self._connected = False
-
-    def _read_loop(self):
-        while self._running and self._connected:
-            try:
-                evbuf = self._jsdev.read(8)
-                if evbuf:
-                    t, value, etype, number = struct.unpack("IhBB", evbuf)
-                    func = (etype << 8) | number
-                    if func in self.BUTTON_NAMES:
-                        self.button_states[self.BUTTON_NAMES[func]] = value
-                    elif func in self.AXIS_NAMES:
-                        self.axis_states[self.AXIS_NAMES[func]] = value / 32767.0
-            except BlockingIOError:
-                time.sleep(0.01)
-            except Exception as e:
-                print(f"[joystick] 读取错误: {e}", flush=True)
-                self._connected = False
-                break
-
-    def try_reconnect(self):
-        now = time.monotonic()
-        if now - self._last_reconnect_attempt < 2.0:
-            return
-        self._last_reconnect_attempt = now
-        if not self._connected:
-            self._try_open()
-            if self._connected:
-                self.start()
+def _ensure_xgo():
+    """懒初始化 xgolib 单例，全局复用"""
+    global _xgo_instance, _xgo_device_type
+    if _xgo_instance is not None:
+        return _xgo_instance, _xgo_device_type
+    try:
+        import xgolib
+        print("[joystick] initializing xgolib (one-time)...", flush=True)
+        _xgo_instance = xgolib.XGO()
+        fw = getattr(_xgo_instance, "version", "")
+        if fw and fw[0] == "R":
+            _xgo_device_type = "xgorider"
+        elif fw and fw[0] == "L":
+            _xgo_device_type = "xgolite"
+        else:
+            _xgo_device_type = "xgomini"
+        print(f"[joystick] xgolib ready: {_xgo_device_type} (fw={fw})", flush=True)
+    except ImportError:
+        print("[joystick] xgolib not installed, debug mode", flush=True)
+    except Exception as e:
+        print(f"[joystick] xgolib init failed: {e}", flush=True)
+    return _xgo_instance, _xgo_device_type
 
 
-# ===================== 机器狗控制 =====================
-class DogController:
-    """将手柄输入翻译为机器狗控制指令。"""
-
-    STEP_SCALE_X = 0.25
-    STEP_SCALE_Y = 0.2
-    STEP_SCALE_Z = 0.7
+# ===================== 控制器线程 =====================
+class ControllerThread(threading.Thread):
+    """后台运行 gamepad_controller.py 中的 XGOController"""
 
     def __init__(self):
-        self._dog = None
-        self._is_rider = False
-        self._step_control = 70
-        self._pace_freq = 2
-        self._height = 105
-        self._play_ball = 0
-        self._crossing_state = False
-        self._init_dog()
-
-    def _init_dog(self):
-        try:
-            self._dog = XGO()
-            self._is_rider = isinstance(self._dog, XGO_RIDER)
-            if self._is_rider:
-                print("[joystick] XGO RIDER 初始化成功", flush=True)
-            else:
-                print("[joystick] XGO 机器狗初始化成功", flush=True)
-        except Exception as e:
-            self._dog = None
-            self._is_rider = False
-            print(f"[joystick] XGO 初始化失败: {e}", flush=True)
+        super().__init__(daemon=True, name="joystick-gamepad-ctrl")
+        self._controller = None
+        self._device_name = ""
 
     @property
-    def dog_available(self):
-        return self._dog is not None
+    def connected(self) -> bool:
+        c = self._controller
+        return c is not None and c._running and c._gamepad_dev is not None
 
-    def _my_map(self, x, in_min, in_max, out_min, out_max):
-        return (out_max - out_min) * (x - in_min) / (in_max - in_min) + out_min
+    @property
+    def device_name(self) -> str:
+        return self._device_name
 
-    def reset(self):
-        self._play_ball = 0
-        if self._dog:
-            try:
-                if self._is_rider:
-                    self._dog.rider_reset()
-                else:
-                    self._dog.reset()
-            except Exception:
-                pass
-        self._step_control = 70
-        self._pace_freq = 2
-        self._height = 105
-        self._crossing_state = False
-
-    def _play_ball_task(self, leg_id):
-        if leg_id != 2 or not self._dog:
-            self._play_ball = 0
-            return
-        motor_id = [11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]
-        angle_down = [-16, 66, 1, -17, 66, 1, -14, 74, 1, -14, 72, 1]
-        motor_2 = [21, 22, 23]
-        angle_hand = [-15, 51, 2, -13, 33, -1, -15, 64, 3, -19, 59, 0]
-        angle_play_2 = [10, 0, 0]
+    def run(self):
         try:
-            if self._play_ball:
-                self._dog.motor_speed(100)
-                self._dog.motor(motor_id, angle_down)
-                time.sleep(0.3)
-            if self._play_ball:
-                self._dog.motor(motor_id, angle_hand)
-                time.sleep(0.2)
-            if self._play_ball:
-                self._dog.motor_speed(255)
-                time.sleep(0.01)
-            if self._play_ball:
-                self._dog.motor(motor_2, angle_play_2)
-                time.sleep(0.3)
-            if self._play_ball:
-                self._dog.motor(motor_id, angle_hand)
-                time.sleep(0.3)
-            if self._play_ball:
-                self._dog.motor_speed(100)
-                self._dog.motor(motor_id, angle_down)
-                time.sleep(0.3)
-            if self._play_ball:
-                self._dog.action(0xFF)
+            gp_dir = "/home/pi/luwu-os/libs/gamepad_config"
+            if gp_dir not in sys.path:
+                sys.path.insert(0, gp_dir)
+            import gamepad_controller as gc
+            gc.CONFIG_FILE = os.path.join(gp_dir, "mappings.json")
+            self._controller = gc.XGOController()
+            xgo, dev_type = _ensure_xgo()
+            if xgo:
+                self._controller.xgo = xgo
+                self._controller.device_type = dev_type
+            else:
+                self._controller._init_xgo()
+            self._controller._load_mapping()
+            self._controller._running = True
+            self._controller._start_config_watcher()
+            self._run_gamepad_loop()
         except Exception as e:
-            print(f"[joystick] play_ball 异常: {e}", flush=True)
-        self._height = 105
-        self._play_ball = 0
+            print(f"[joystick] controller error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
-    def process_event(self, name, value):
-        if not self._dog:
-            return
-        # 跨障模式下只响应 SELECT/START（仅 dog 机型）
-        if self._crossing_state and name not in ("SELECT", "START"):
+    def _run_gamepad_loop(self):
+        c = self._controller
+        import gamepad_controller as gc
+        while c._running:
+            dev = c._find_gamepad()
+            if not dev:
+                self._device_name = ""
+                gc.log.warning("未找到手柄，2 秒后重试...")
+                time.sleep(2)
+                continue
+            self._device_name = dev.name
+            c._gamepad_dev = dev
+            if c._is_ble_gatt_gamepad(dev.name):
+                gc.log.info(f"检测到 BLE GATT 手柄: {dev.name}，启用 BLE 路径")
+                try:
+                    c._run_ble_loop(dev)
+                except Exception as e:
+                    gc.log.error(f"[BLE] 循环异常: {e}")
+                    time.sleep(1)
+            else:
+                try:
+                    c._run_evdev_loop(dev)
+                except Exception as e:
+                    gc.log.error(f"[evdev] 循环异常: {e}")
+                    time.sleep(1)
+            c._gamepad_dev = None
+            self._device_name = ""
+            c._stop_movement()
+            time.sleep(1)
+
+    def stop(self):
+        c = self._controller
+        if not c:
             return
         try:
-            if self._is_rider:
-                self._process_rider(name, value)
-            else:
-                self._process_dog(name, value)
+            c._running = False
+            c._stop_movement()
+            if c._gamepad_dev:
+                try:
+                    c._gamepad_dev.close()
+                except Exception:
+                    pass
+                c._gamepad_dev = None
+            self._device_name = ""
         except Exception as e:
-            print(f"[joystick] 控制错误 ({name}={value}): {e}", flush=True)
-
-    def _process_rider(self, name, value):
-        dog = self._dog
-        # Rider 参数极限：VX_LIMIT=1.5, VYAW_LIMIT=360, ATTITUDE_LIMIT roll=17
-        speed_ratio = self._step_control / 100.0  # 0.4~1.0 调速比例
-        # --- 摇杆轴 ---
-        if name == "RK1_LEFT_RIGHT":
-            # 左摇杆左右 → 转向 (VYAW_LIMIT=360)
-            v = -value
-            if abs(v) < 0.05:
-                dog.rider_turn(0)
-            else:
-                dog.rider_turn(v * speed_ratio * 360)
-        elif name == "RK1_UP_DOWN":
-            # 左摇杆上下 → 前进/后退 (VX_LIMIT=1.5)
-            v = -value
-            if abs(v) < 0.05:
-                dog.rider_move_x(0)
-            else:
-                dog.rider_move_x(v * speed_ratio * 1.5)
-        elif name == "RK2_UP_DOWN":
-            # 右摇杆上下 → 前进/后退（备用）
-            v = -value
-            if abs(v) < 0.05:
-                dog.rider_move_x(0)
-            else:
-                dog.rider_move_x(v * speed_ratio * 1.5)
-        elif name == "RK2_LEFT_RIGHT":
-            # 右摇杆左右 → 横滚倾斜 (ATTITUDE_LIMIT roll=17)
-            dog.rider_roll(value * 17)
-        # --- 按钮 ---
-        elif name == "A":
-            if value == 1 and not self._crossing_state:
-                self._height = max(75, self._height - 10)
-                dog.rider_height(self._height)
-        elif name == "B":
-            if value == 1:
-                dog.rider_roll(-15)
-            else:
-                dog.rider_roll(0)
-        elif name == "X":
-            if value == 1:
-                dog.rider_roll(15)
-            else:
-                dog.rider_roll(0)
-        elif name == "Y":
-            if value == 1 and not self._crossing_state:
-                self._height = min(115, self._height + 10)
-                dog.rider_height(self._height)
-        elif name == "L1":
-            if value == 1 and not self._crossing_state:
-                dog.rider_action(1)
-        elif name == "R1":
-            if value == 1 and not self._crossing_state:
-                dog.rider_action(2)
-        elif name == "SELECT":
-            # Rider 的 SELECT：切换平衡模式
-            if value == 1:
-                if not self._crossing_state:
-                    self._crossing_state = True
-                    dog.rider_balance_roll(1)
-                else:
-                    self._crossing_state = False
-                    dog.rider_balance_roll(0)
-        elif name == "START":
-            if value == 1:
-                self.reset()
-        elif name == "BTN_RK1":
-            if value == 1:
-                self._step_control += 30
-                if self._step_control > 100:
-                    self._step_control = 40
-        elif name == "BTN_RK2":
-            if value == 1:
-                self._pace_freq += 1
-                if self._pace_freq > 3:
-                    self._pace_freq = 1
-        elif name == "L2":
-            v = (value + 1) / 2
-            if v > 0.95:
-                dog.rider_action(4)
-        elif name == "R2":
-            v = (value + 1) / 2
-            if v > 0.95:
-                dog.rider_action(5)
-        elif name == "WSAD_LEFT_RIGHT":
-            v = -value
-            if abs(v) < 0.05:
-                dog.rider_turn(0)
-            else:
-                dog.rider_turn(v * speed_ratio * 360)
-        elif name == "WSAD_UP_DOWN":
-            v = -value
-            if abs(v) < 0.05:
-                dog.rider_move_x(0)
-            else:
-                dog.rider_move_x(v * speed_ratio * 1.5)
-
-    def _process_dog(self, name, value):
-        dog = self._dog
-        # --- 摇杆轴 ---
-        if name == "RK1_LEFT_RIGHT":
-            v = -value
-            fvalue = int(self._step_control * self.STEP_SCALE_Y * v)
-            dog.move("y", fvalue)
-        elif name == "RK1_UP_DOWN":
-            v = -value
-            fvalue = int(self._step_control * self.STEP_SCALE_X * v)
-            dog.move("x", fvalue)
-        elif name == "RK2_UP_DOWN":
-            v = -value
-            if v == 0:
-                dog.turn(0)
-            elif abs(v) > 0.9:
-                fvalue = int(self._my_map(self._step_control, 0, 100, 20, self.STEP_SCALE_Z * 100)) * (1 if v > 0 else -1)
-                dog.turn(fvalue)
-        elif name == "RK2_LEFT_RIGHT":
-            fvalue = int(value * 15)
-            dog.attitude("p", fvalue)
-        # --- 按钮 ---
-        elif name == "A":
-            if value == 1 and not self._crossing_state:
-                self._height = max(75, self._height - 10)
-                dog.translation("z", self._height)
-        elif name == "B":
-            if value == 1:
-                dog.attitude("y", -35)
-            else:
-                dog.attitude("r", 0)
-                dog.attitude("y", 0)
-        elif name == "X":
-            if value == 1:
-                dog.attitude("y", 35)
-            else:
-                dog.attitude("r", 0)
-                dog.attitude("y", 0)
-        elif name == "Y":
-            if value == 1 and not self._crossing_state:
-                self._height = min(115, self._height + 10)
-                dog.translation("z", self._height)
-        elif name == "L1":
-            if value == 1 and not self._crossing_state:
-                dog.action(10)
-        elif name == "R1":
-            if value == 1 and not self._crossing_state and self._play_ball == 0:
-                self._play_ball = 2
-                t = threading.Thread(
-                    target=self._play_ball_task,
-                    args=(self._play_ball,),
-                    name="play_ball_task",
-                    daemon=True,
-                )
-                t.start()
-        elif name == "SELECT":
-            if value == 1:
-                if not self._crossing_state:
-                    self._crossing_state = True
-                    dog.gait_type("high_walk")
-                    time.sleep(0.01)
-                    dog.pace("slow")
-                    time.sleep(0.01)
-                    dog.translation("z", 95)
-                    time.sleep(0.01)
-                    dog.forward(25)
-                else:
-                    self.reset()
-        elif name == "START":
-            if value == 1:
-                self.reset()
-        elif name == "BTN_RK1":
-            if value == 1:
-                self._step_control += 30
-                if self._step_control > 100:
-                    self._step_control = 40
-        elif name == "BTN_RK2":
-            if value == 1:
-                self._pace_freq += 1
-                if self._pace_freq > 3:
-                    self._pace_freq = 1
-                pace_map = {1: "slow", 2: "normal", 3: "high"}
-                dog.pace(pace_map.get(self._pace_freq, "normal"))
-        elif name == "L2":
-            v = (value + 1) / 2
-            if v > 0.95:
-                dog.action(16)
-        elif name == "R2":
-            v = (value + 1) / 2
-            if v > 0.95:
-                dog.action(11)
-        elif name == "WSAD_LEFT_RIGHT":
-            v = -value
-            fvalue = v * self._step_control * self.STEP_SCALE_Y
-            dog.move("y", fvalue)
-        elif name == "WSAD_UP_DOWN":
-            v = -value
-            fvalue = int(v * self._step_control * self.STEP_SCALE_X)
-            dog.move("x", fvalue)
-
-    @property
-    def step_control(self):
-        return self._step_control
-
-    @property
-    def pace_freq(self):
-        return self._pace_freq
-
-    @property
-    def height(self):
-        return self._height
+            print(f"[joystick] controller stop error: {e}", flush=True)
 
 
-# ===================== 自绘小控件（主题化） =====================
-
-class StickIndicator(QWidget):
-    """圆形摇杆指示器：外圈 + 十字 + 当前位置圆点。颜色全部来自主题。"""
-
-    def __init__(self, label: str, size: int = 70, parent=None):
-        super().__init__(parent)
-        self._label = label
-        self._x = 0.0
-        self._y = 0.0
-        self.setFixedSize(size, size + 14)
-
-    def set_position(self, x: float, y: float):
-        nx = max(-1.0, min(1.0, x))
-        ny = max(-1.0, min(1.0, y))
-        if abs(nx - self._x) > 0.01 or abs(ny - self._y) > 0.01:
-            self._x, self._y = nx, ny
-            self.update()
-
-    def paintEvent(self, ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = self.width()
-        circle_h = self.height() - 14
-        cx, cy = w / 2, circle_h / 2
-        r = min(w, circle_h) / 2 - 3
-        active = abs(self._x) > 0.05 or abs(self._y) > 0.05
-
-        # 外圈：卡片风格（白底半透明 + 深蓝描边）
-        border_c = QColor(*ColorRGB.text_primary, 55)
-        bg_c = QColor(*ColorRGB.bg_card, 190)
-        p.setPen(QPen(border_c, 1.5))
-        p.setBrush(QBrush(bg_c))
-        p.drawEllipse(QPointF(cx, cy), r, r)
-
-        # 十字参考线：轨道色
-        p.setPen(QPen(QColor(*ColorRGB.bg_track), 1))
-        p.drawLine(int(cx - r + 3), int(cy), int(cx + r - 3), int(cy))
-        p.drawLine(int(cx), int(cy - r + 3), int(cx), int(cy + r - 3))
-
-        # 摇杆点 + 轨迹线
-        dot_r = 5
-        px = cx + self._x * (r - dot_r)
-        py = cy - self._y * (r - dot_r)
-        if active:
-            p.setPen(QPen(QColor(T.accent), 1.5))
-            p.drawLine(QPointF(cx, cy), QPointF(px, py))
-        p.setPen(Qt.PenStyle.NoPen)
-        dot_c = QColor(T.accent) if active else QColor(*ColorRGB.text_muted)
-        p.setBrush(QBrush(dot_c))
-        p.drawEllipse(QPointF(px, py), dot_r, dot_r)
-
-        # 标签
-        f = QFont()
-        f.setPixelSize(Font.caption)
-        f.setBold(True)
-        p.setFont(f)
-        label_c = QColor(T.text_secondary) if active else QColor(T.text_muted)
-        p.setPen(label_c)
-        p.drawText(0, circle_h, w, 14, Qt.AlignmentFlag.AlignCenter, self._label)
-
-
-class TriggerBar(QWidget):
-    """竖直触发键进度条（L2 / R2）。颜色全部来自主题。"""
-
-    def __init__(self, label: str, parent=None):
-        super().__init__(parent)
-        self._label = label
-        self._value = 0.0
-        self.setFixedSize(20, 70)
-
-    def set_value(self, v: float):
-        nv = max(0.0, min(1.0, v))
-        if abs(nv - self._value) > 0.01:
-            self._value = nv
-            self.update()
-
-    def paintEvent(self, ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        label_h = 12
-        bar_y = label_h + 2
-        bar_h = h - label_h - 2
-
-        # 背景槽
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(*ColorRGB.bg_track))
-        p.drawRoundedRect(0, bar_y, w, bar_h, Radius.sm, Radius.sm)
-
-        # 填充条
-        fill_h = int(bar_h * self._value)
-        if fill_h > 0:
-            fill_c = QColor(T.accent) if self._value > 0.95 else QColor(T.text_secondary)
-            p.setBrush(fill_c)
-            p.drawRoundedRect(0, bar_y + bar_h - fill_h, w, fill_h, Radius.sm, Radius.sm)
-
-        # 标签
-        f = QFont()
-        f.setPixelSize(Font.caption)
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(QColor(T.text_secondary))
-        p.drawText(0, 0, w, label_h, Qt.AlignmentFlag.AlignCenter, self._label)
-
-
-def _make_panel() -> QFrame:
-    """主题化卡片面板（白底半透明圆角）。"""
-    f = QFrame()
-    f.setStyleSheet(
-        f"QFrame {{ {T_qss.card()} }}"
-    )
-    return f
-
-
-# ===================== PySide6 页面 =====================
-
+# ===================== UI =====================
 class JoystickPage(AppFrame):
-    """手柄控制界面，继承 AppFrame 获得主题背景 + 角标布局。"""
-
-    # ABXY 使用主题语义色
-    _ABXY_COLORS = {
-        "A": T.success,
-        "B": T.danger,
-        "X": T.accent,
-        "Y": T.warning,
-    }
+    """2.4G 遥控界面 — 与蓝牙页面相同的居中布局风格"""
 
     def __init__(self):
         super().__init__()
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._first_paint_logged = False
-
-        self._js = JoystickReader(js_id=0)
-        self._controller = DogController()
-
-        self._last_btn_states: dict = {}
-        self._last_axis_states: dict = {}
         self._exiting = False
 
-        # 记录上次状态，避免每帧调用 setCornerHint 触发重排
-        self._last_js_conn = None
-        self._last_dog_avail = None
+        # 隐藏光标（手柄 App 不需要鼠标光标）
+        self._cursor_timer.stop()
+        self._cursor_hidden = True
+        self.setCursor(_invisible_cursor())
 
-        # ---- 标题 & 角标 ----
+        self._ctrl_thread: ControllerThread | None = None
+
+        # ---- 标题 ----
         self.setTitle(_T("title"))
-        self.setCornerHints(
-            bl=(_T("hint_exit"), Asset.icon_back),
-            br=_T("hint_action"),
+
+        # ---- QR 映射页（覆盖层，初始隐藏）----
+        self._qr_page = QRMappingPage(self)
+        self._qr_page.go_back = self._hide_qr_page
+        self._qr_page.hide()
+
+        # ---- 背景 ----
+        _pix = QPixmap(_APP_BG_IMAGE)
+        if not _pix.isNull():
+            self._bg_pix = _pix
+            self.update()
+
+        # ---- 图标 ----
+        self.icon_label = QLabel(self)
+        pix = QPixmap(DEMO_ICON)
+        if not pix.isNull():
+            self.icon_label.setPixmap(pix.scaled(
+                88, 88,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet(T_qss.transparent())
+
+        # accent 装饰线
+        self.accent_line = QFrame(self)
+        self.accent_line.setFixedSize(60, 2)
+        self.accent_line.setStyleSheet(
+            f"background-color: {T_Color.accent}; border: none;"
         )
 
-        # ---- 状态 chip（位于标题下方） ----
-        self._js_chip = QLabel(_T("joystick_disconnected"), self)
-        self._js_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._js_chip.setStyleSheet(T_qss.chip("danger"))
+        # 设备名
+        self.device_label = QLabel("", self)
+        self.device_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.device_label.setStyleSheet(T_qss.text("subtitle"))
 
-        self._dog_chip = QLabel(_T("dog_offline"), self)
-        self._dog_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._dog_chip.setStyleSheet(T_qss.chip("danger"))
+        # 状态 chip
+        self.status_label = QLabel(_T("init"), self)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet(T_qss.chip("muted"))
 
-        # ---- 左侧：摇杆区 ----
-        self.stick_rk1 = StickIndicator("RK1", size=62)
-        self.stick_rk2 = StickIndicator("RK2", size=62)
-        self.stick_wsad = StickIndicator("WSAD", size=50)
-        self.bar_l2 = TriggerBar("L2")
-        self.bar_r2 = TriggerBar("R2")
+        # 子状态（控制器是否启动）
+        self.sub_label = QLabel("", self)
+        self.sub_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sub_label.setStyleSheet(T_qss.text("body", color=T_Color.accent))
 
-        sticks_row = QHBoxLayout()
-        sticks_row.setSpacing(Spacing.xs)
-        sticks_row.setContentsMargins(0, 0, 0, 0)
-        sticks_row.addWidget(self.bar_l2, 0, Qt.AlignmentFlag.AlignVCenter)
-        sticks_row.addWidget(self.stick_rk1, 0, Qt.AlignmentFlag.AlignVCenter)
-        sticks_row.addWidget(self.stick_rk2, 0, Qt.AlignmentFlag.AlignVCenter)
-        sticks_row.addWidget(self.bar_r2, 0, Qt.AlignmentFlag.AlignVCenter)
+        # ---- 主布局（垂直居中）----
+        center = QWidget(self)
+        center.setStyleSheet(T_qss.transparent())
+        v = QVBoxLayout(center)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(Spacing.sm)
+        v.addWidget(self.accent_line, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(Spacing.md)
+        v.addWidget(self.device_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(Spacing.xs)
+        v.addWidget(self.status_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(Spacing.xs)
+        v.addWidget(self.sub_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._center = center
 
-        wsad_wrap = QHBoxLayout()
-        wsad_wrap.setContentsMargins(0, 0, 0, 0)
-        wsad_wrap.addStretch(1)
-        wsad_wrap.addWidget(self.stick_wsad)
-        wsad_wrap.addStretch(1)
-
-        left_panel = _make_panel()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(Spacing.xs, Spacing.xs, Spacing.xs, Spacing.xs)
-        left_layout.setSpacing(Spacing.xs)
-        left_layout.addLayout(sticks_row)
-        left_layout.addLayout(wsad_wrap)
-
-        # ---- 右侧：按钮区 + 参数 ----
-        self.btn_labels: dict = {}
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(3)
-        btn_grid.setContentsMargins(0, 0, 0, 0)
-        layout_def = [
-            ("L1", 0, 0), ("R1", 0, 1), ("SELECT", 0, 2), ("START", 0, 3),
-            ("X",  1, 0), ("Y",  1, 1), ("RK1",   1, 2), ("RK2",   1, 3),
-            ("A",  2, 0), ("B",  2, 1), ("MODE",  2, 2),
-        ]
-        for name, row, col in layout_def:
-            lbl = QLabel(name)
-            lbl.setFixedSize(34, 17)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            color = self._ABXY_COLORS.get(name)
-            lbl.setProperty("_color", color)
-            lbl.setStyleSheet(self._btn_style(False, color))
-            self.btn_labels[name] = lbl
-            btn_grid.addWidget(lbl, row, col)
-
-        # 参数卡片区
-        self.lbl_step = QLabel("70")
-        self.lbl_pace = QLabel(_T("pace_med"))
-        self.lbl_height = QLabel("105")
-        self._param_labels = [self.lbl_step, self.lbl_pace, self.lbl_height]
-        for v in self._param_labels:
-            v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            v.setStyleSheet(T_qss.text("body", color=T.success))
-
-        params_row = QHBoxLayout()
-        params_row.setSpacing(Spacing.xs)
-        params_row.setContentsMargins(0, 0, 0, 0)
-        for tag_key, val_lbl in (
-            (_T("step"), self.lbl_step),
-            (_T("pace"), self.lbl_pace),
-            (_T("height"), self.lbl_height),
-        ):
-            cell = QFrame()
-            cell.setStyleSheet(
-                f"QFrame {{"
-                f"  background-color: {T.card_bg};"
-                f"  border: 1px solid {T.card_border};"
-                f"  border-radius: {Radius.sm}px;"
-                f"}}"
-            )
-            cl = QVBoxLayout(cell)
-            cl.setContentsMargins(2, 2, 2, 2)
-            cl.setSpacing(0)
-            tag = QLabel(tag_key)
-            tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            tag.setStyleSheet(T_qss.text("caption"))
-            cl.addWidget(tag)
-            cl.addWidget(val_lbl)
-            params_row.addWidget(cell)
-
-        right_panel = _make_panel()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(Spacing.xs, Spacing.xs, Spacing.xs, Spacing.xs)
-        right_layout.setSpacing(Spacing.xs)
-        right_layout.addLayout(btn_grid)
-        right_layout.addLayout(params_row)
-
-        # ---- 内容容器（由 resizeEvent 定位） ----
-        self._content = QWidget(self)
-        body_layout = QHBoxLayout(self._content)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(Spacing.xs)
-        body_layout.addWidget(left_panel, 11)
-        body_layout.addWidget(right_panel, 9)
-
-        # ---- 定时器 ----
-        self._refresh_timer = QTimer(self)
-        self._refresh_timer.timeout.connect(self._refresh_ui)
-        self._refresh_timer.start(60)
-
-        self._poll_timer = QTimer(self)
-        self._poll_timer.timeout.connect(self._poll_joystick)
-        self._poll_timer.start(20)
+        # ---- 角标 ----
+        self.setCornerHints(
+            tl=(_T("hint_mapping"), T_Asset.icon_left),
+            bl=(_T("hint_exit"), T_Asset.icon_back),
+            br=(_T("hint_bt"), T_Asset.icon_enter),
+        )
 
         QTimer.singleShot(AUTO_EXIT_SEC * 1000, self.close)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._js.start()
+        QTimer.singleShot(200, self._start_controller)
 
-    # ---- 按钮样式（使用主题色） ----
-    @staticmethod
-    def _btn_style(pressed: bool, color: str | None) -> str:
-        if pressed:
-            bg = color if color else T.accent
-            return (
-                f"color: {T.text_invert}; background-color: {bg};"
-                f" border-radius: {Radius.sm}px;"
-                f" font-size: {Font.caption}px; font-weight: bold;"
-            )
-        fg = color if color else T.text_muted
-        return (
-            f"color: {fg}; background-color: {T.card_bg};"
-            f" border-radius: {Radius.sm}px;"
-            f" font-size: {Font.caption}px; font-weight: bold;"
-        )
-
-    # ---- 布局（AppFrame 必须先调 super）----
+    # ---- 布局 ----
     def resizeEvent(self, ev):
-        super().resizeEvent(ev)   # 必须：AppFrame 负责标题 & 4 角重排
+        super().resizeEvent(ev)
         w, h = self.width(), self.height()
-
-        # 状态 chip 紧接标题下方
-        chip_h = 16
-        chip_y = 28
-        chip_w = min(130, (w - Spacing.md * 2 - Spacing.xs) // 2)
-        self._js_chip.setGeometry(Spacing.sm, chip_y, chip_w, chip_h)
-        self._dog_chip.setGeometry(w - chip_w - Spacing.sm, chip_y, chip_w, chip_h)
-
-        # 主内容区
-        content_y = chip_y + chip_h + Spacing.xs
-        content_h = h - content_y - 20   # 20px 留给底部角标
-        self._content.setGeometry(
-            Spacing.sm, content_y,
-            w - Spacing.sm * 2, max(content_h, 80),
-        )
-
-    # ---- 手柄轮询 ----
-    def _poll_joystick(self):
-        if not self._js.connected:
-            self._js.try_reconnect()
+        if w <= 0 or h <= 0:
             return
-        for name, value in self._js.button_states.items():
-            last = self._last_btn_states.get(name, 0)
-            if value != last:
-                self._last_btn_states[name] = value
-                self._controller.process_event(name, value)
-        for name, value in self._js.axis_states.items():
-            last = self._last_axis_states.get(name, 0.0)
-            if abs(value - last) > 0.05 or (abs(last) > 0.05 and abs(value) <= 0.05):
-                self._last_axis_states[name] = value
-                self._controller.process_event(name, value)
+        top = max(28, h * 14 // 100)
+        bottom = max(20, h * 8 // 100)
+        self._center.setGeometry(0, top, w, h - top - bottom)
 
-    # ---- UI 刷新 ----
-    def _refresh_ui(self):
-        # 手柄状态 chip（仅状态变化时更新，避免频繁触发 setCornerHint relayout）
-        js_conn = self._js.connected
-        if js_conn != self._last_js_conn:
-            self._last_js_conn = js_conn
-            if js_conn:
-                self._js_chip.setText(_T("joystick_connected"))
-                self._js_chip.setStyleSheet(T_qss.chip("success"))
-            else:
-                self._js_chip.setText(_T("joystick_disconnected"))
-                self._js_chip.setStyleSheet(T_qss.chip("danger"))
+        if self._qr_page:
+            self._qr_page.setGeometry(0, 0, w, h)
 
-        # 机器狗状态 chip
-        dog_avail = self._controller.dog_available
-        if dog_avail != self._last_dog_avail:
-            self._last_dog_avail = dog_avail
-            if dog_avail:
-                self._dog_chip.setText(_T("dog_ready"))
-                self._dog_chip.setStyleSheet(T_qss.chip("success"))
-            else:
-                self._dog_chip.setText(_T("dog_offline"))
-                self._dog_chip.setStyleSheet(T_qss.chip("danger"))
-
-        # 摇杆位置
-        ax = self._js.axis_states
-        self.stick_rk1.set_position(ax.get("RK1_LEFT_RIGHT", 0), -ax.get("RK1_UP_DOWN", 0))
-        self.stick_rk2.set_position(ax.get("RK2_LEFT_RIGHT", 0), -ax.get("RK2_UP_DOWN", 0))
-        self.stick_wsad.set_position(ax.get("WSAD_LEFT_RIGHT", 0), -ax.get("WSAD_UP_DOWN", 0))
-        self.bar_l2.set_value((ax.get("L2", -1.0) + 1) / 2)
-        self.bar_r2.set_value((ax.get("R2", -1.0) + 1) / 2)
-
-        # 按钮高亮
-        btn_key_map = {
-            "A": "A", "B": "B", "X": "X", "Y": "Y",
-            "L1": "L1", "R1": "R1",
-            "SELECT": "SELECT", "START": "START", "MODE": "MODE",
-            "RK1": "BTN_RK1", "RK2": "BTN_RK2",
-        }
-        for display_name, internal_name in btn_key_map.items():
-            lbl = self.btn_labels.get(display_name)
-            if not lbl:
-                continue
-            pressed = bool(self._js.button_states.get(internal_name, 0))
-            color = lbl.property("_color")
-            lbl.setStyleSheet(self._btn_style(pressed, color))
-
-        # 参数卡片值
-        pace_names = {1: _T("pace_slow"), 2: _T("pace_med"), 3: _T("pace_fast")}
-        self.lbl_step.setText(str(self._controller.step_control))
-        self.lbl_pace.setText(pace_names.get(self._controller.pace_freq, _T("pace_med")))
-        self.lbl_height.setText(str(self._controller.height))
-
-    # ---- 首帧日志 ----
     def paintEvent(self, ev):
         super().paintEvent(ev)
         if not self._first_paint_logged:
             self._first_paint_logged = True
             mark("first paintEvent")
-            print("[joystick] boot: " + self._stage_summary(), flush=True)
 
-    def _stage_summary(self) -> str:
-        lines = []
-        prev = 0.0
-        for name, ms in _stages:
-            lines.append(f"{name}: {ms:.0f}ms (+{ms - prev:.0f})")
-            prev = ms
-        return " | ".join(lines)
+    # ---- 控制器启停 ----
+    def _start_controller(self):
+        """启动手柄控制器线程"""
+        # 启动键位映射 Web 服务器
+        try:
+            mapping_server.start_server()
+        except Exception as e:
+            print(f"[joystick] mapping server start failed: {e}", flush=True)
 
+        if self._ctrl_thread and self._ctrl_thread.is_alive():
+            return
+        self._ctrl_thread = ControllerThread()
+        self._ctrl_thread.start()
+        print("[joystick] controller started", flush=True)
+        # 启动状态轮询
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_status)
+        self._poll_timer.start(1000)
+
+    def _stop_controller(self):
+        """停止手柄控制器"""
+        if self._ctrl_thread:
+            print("[joystick] stopping controller...", flush=True)
+            self._ctrl_thread.stop()
+        # 停止键位映射服务器
+        try:
+            mapping_server.stop_server()
+        except Exception:
+            pass
+        print("[joystick] controller stopped", flush=True)
+
+    def _poll_status(self):
+        """每秒轮询控制器状态并更新 UI"""
+        if not self._ctrl_thread or not self._ctrl_thread.is_alive():
+            return
+        if self._ctrl_thread.connected:
+            name = self._ctrl_thread.device_name
+            self.device_label.setText(name)
+            self.status_label.setText(_T("connected"))
+            self.status_label.setStyleSheet(T_qss.chip("success"))
+            self.sub_label.setText(_T("ready"))
+        else:
+            self.device_label.setText("")
+            self.status_label.setText(_T("disconnected"))
+            self.status_label.setStyleSheet(T_qss.chip("danger"))
+            self.sub_label.setText("")
+
+    # ---- QR 映射页 ----
+    def _show_qr_page(self):
+        print("[joystick] showing QR mapping page", flush=True)
+        if not mapping_server.is_running():
+            try:
+                mapping_server.start_server()
+            except Exception as e:
+                print(f"[joystick] mapping server start failed: {e}", flush=True)
+        try:
+            self._qr_page._generate()
+        except Exception as e:
+            print(f"[joystick] QR generate failed: {e}", flush=True)
+        self._qr_page.show()
+        self._qr_page.raise_()
+        self._qr_page.setFocus()
+        self._center.hide()
+        self.icon_label.hide()
+        self.accent_line.hide()
+        self.device_label.hide()
+        self.status_label.hide()
+        self.sub_label.hide()
+        for c in self._corners.values():
+            c.hide()
+
+    def _hide_qr_page(self):
+        print("[joystick] hiding QR mapping page", flush=True)
+        self._qr_page.hide()
+        self._center.show()
+        self.icon_label.show()
+        self.accent_line.show()
+        self.device_label.show()
+        self.status_label.show()
+        self.sub_label.show()
+        for c in self._corners.values():
+            c.show()
+        self.setFocus()
+
+    # ---- 按键 ----
     def keyPressEvent(self, ev: QKeyEvent):
         key = ev.key()
-        if key in (Qt.Key.Key_Back, Qt.Key.Key_Escape, Qt.Key.Key_Q):
+        # QR 页面可见时优先处理返回
+        if self._qr_page.isVisible():
+            if key == Qt.Key.Key_Back:
+                print("[joystick] C -> back from QR", flush=True)
+                self._hide_qr_page()
+                return
+            self._qr_page.keyPressEvent(ev)
+            return
+
+        if key == Qt.Key.Key_Back:
             if self._exiting:
                 return
             self._exiting = True
-            print("[joystick] KEY_BACK -> exit", flush=True)
+            print("[joystick] C -> exit", flush=True)
             self.close()
             QApplication.instance().quit()
+        elif key == Qt.Key.Key_Left:
+            # A 键 → 打开键位映射
+            print("[joystick] A -> key mapping", flush=True)
+            self._show_qr_page()
 
+    # ---- 退出清理 ----
     def closeEvent(self, ev):
         print("[joystick] closing", flush=True)
-        self._poll_timer.stop()
-        self._refresh_timer.stop()
-        self._js.stop()
-        self._controller.reset()
+        self._stop_controller()
+        try:
+            mapping_server.stop_server()
+        except Exception:
+            pass
         super().closeEvent(ev)
 
 
@@ -925,7 +453,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: QApplication.instance().quit())
 
     app = QApplication(sys.argv)
-    apply_app_palette(app)       # 全局字体 + 调色板 + 滚动条
+    apply_app_palette(app)
     mark("QApplication created")
 
     w = JoystickPage()
