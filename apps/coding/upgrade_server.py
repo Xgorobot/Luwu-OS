@@ -133,7 +133,8 @@ class _UpgradeHandler(BaseHTTPRequestHandler):
             self._json({"error": "upgrade manager not ready"}, 503)
             return
 
-        if um.status != um.STATUS_AVAILABLE:
+        # 允许 available（首次）和 failed（重试）状态下启动升级
+        if um.status not in (um.STATUS_AVAILABLE, um.STATUS_FAILED):
             self._json({
                 "success": False,
                 "message": f"cannot start upgrade in status '{um.status}'",

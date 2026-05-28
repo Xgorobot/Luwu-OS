@@ -393,8 +393,8 @@ class UpgradeManager:
         return self.PYPI_MIRRORS[idx]["name"] if idx is not None else ""
 
     def start_upgrade(self):
-        """开始升级（后台线程）。"""
-        if self.status != self.STATUS_AVAILABLE:
+        """开始升级（后台线程），允许 available 和 failed（重试）状态。"""
+        if self.status not in (self.STATUS_AVAILABLE, self.STATUS_FAILED):
             return
         self._cancel_flag.clear()
         self._pip_process = None
