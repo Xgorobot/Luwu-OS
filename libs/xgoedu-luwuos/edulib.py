@@ -1746,7 +1746,7 @@ class XGOEDU():
         """
         # 内联 load_calibration（避免依赖项目内 camera_calibration 模块）
         def _load_calibration():
-            _CALIBRATION_FILE = "/opt/luwu-os/.xgo_blockly/camera_calibration.json"
+            _CALIBRATION_FILE = "/opt/luwu-os/.xgo-blockly/camera_calibration.json"
             if os.path.exists(_CALIBRATION_FILE):
                 try:
                     with open(_CALIBRATION_FILE, "r") as f:
