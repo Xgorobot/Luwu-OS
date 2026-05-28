@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xgoedu-luwuos"
-version = "2.0.6"
+version = "2.1.1"
 description = "XGO 机器人教育库（LuwU OS 新镜像版）"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.7"
