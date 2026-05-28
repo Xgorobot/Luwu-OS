@@ -78,6 +78,9 @@ def conver2u8(data, limit, min_value=0):
     将实际参数转化为0到255的单字节数据
     Convert the actual parameters to single byte data from 0 to 255
     """
+    # 防御性检查：串口读取失败或调用方传入异常值时，避免 TypeError
+    if data is None or limit is None:
+        return min_value
     max_value = 0xff
     if not isinstance(limit, list):
         limit = [-limit, limit]

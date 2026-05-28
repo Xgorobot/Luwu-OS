@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xgolib"
-version = "1.1.4"
+version = "1.1.5"
 description = "XGO 机器人控制库"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"

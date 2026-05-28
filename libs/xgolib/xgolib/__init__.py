@@ -7,7 +7,7 @@ XGO 机器人控制库
 from .xgolib_dog import XGO_DOG
 from .xgolib_rider import XGO_RIDER
 
-__version__ = '1.1.4'
+__version__ = '1.1.5'
 __all__ = ['XGO', 'XGO_DOG', 'XGO_RIDER']
 
 # 自动扫描的候选串口列表（按优先级排列）

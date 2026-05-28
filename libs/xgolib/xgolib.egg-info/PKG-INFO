@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: xgolib
-Version: 1.1.4
+Version: 1.1.5
 Summary: XGO 机器人控制库
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown

@@ -479,7 +479,7 @@ class AboutPage(AppFrame):
     def _gather_info(self):
         t = self.la.get("DEMOEN", {})
         items = []
-        items.append((t.get("LUWUOS_VER", "LuwuOS Version"), "2.0.0"))
+        items.append((t.get("LUWUOS_VER", "LuwuOS Version"), "2.0.1"))
         items.append((t.get("XGOLIB_VER", "xgolib Version"), self._tr_val(get_xgolib_version())))
         items.append((t.get("XGOEDU_VER", "xgoedu Version"), self._tr_val(get_xgoedu_version())))
         items.append((t.get("CPU_MODEL", "CPU"), self._tr_val(get_cpu_model())))
