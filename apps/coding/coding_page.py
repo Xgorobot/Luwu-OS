@@ -51,6 +51,7 @@ from config import (
 from managers import (
     BlocklyServiceManager, ProgramRunner, UpgradeManager, FileListManager,
 )
+import upgrade_server
 
 
 # ========================================================================
@@ -107,6 +108,10 @@ class CodingPage(AppFrame):
         self.upgrade_manager = UpgradeManager()
         self.upgrade_manager.set_service_manager(self.service_manager)
 
+        # --- 升级 HTTP API 服务（daemon 线程，供 Blockly 网页调用）---
+        self._upgrade_server = upgrade_server.start_server(self.upgrade_manager)
+        _trace("upgrade HTTP API server started")
+
         # --- 本地 IP ---
         self.local_ip = get_local_ip()
         print(f"[coding] Local IP: {self.local_ip}", flush=True)
@@ -156,7 +161,7 @@ class CodingPage(AppFrame):
         # --- 加密状态检查 ---
         self._is_encrypted = os.path.exists(LOCK_JSON_PATH)
 
-        # --- 启动就绪标志（服务 + 版本检查都完成后才离开 loading）---
+        # --- 启动就绪标志（服务就绪后离开 loading）---
         self._service_ready = False
         self._loading_start_time = time.time()  # 用于超时兜底
 
@@ -167,7 +172,7 @@ class CodingPage(AppFrame):
         self._loading_timer.timeout.connect(self._animate_loading)
         self._loading_timer.start(400)
 
-        # --- 提前启动状态轮询（监听服务+版本检查完成，进入主页/升级提示）---
+        # --- 提前启动状态轮询（监听服务就绪，进入主页）---
         self._check_timer = QTimer(self)
         self._check_timer.timeout.connect(self._check_status)
         self._check_timer.start(300)
@@ -177,8 +182,6 @@ class CodingPage(AppFrame):
 
         # --- 延迟启动服务
         QTimer.singleShot(200, self._start_service)
-        # 同时启动版本检查（后台线程，与 Flask 启动并行）
-        QTimer.singleShot(200, self.upgrade_manager.start_check)
 
         _trace(f"__init__ done, QTimers for startup at +200ms")
 
@@ -244,7 +247,7 @@ class CodingPage(AppFrame):
         self._try_leave_loading()
 
     def _try_leave_loading(self):
-        """当服务就绪 + 版本检查完成（或超时）→ 离开 loading 进入主页或升级提示。"""
+        """当服务就绪（或超时）→ 离开 loading 进入主页。"""
         if self.current_page != PAGE_LOADING:
             return
         waited = time.time() - self._loading_start_time
@@ -254,32 +257,13 @@ class CodingPage(AppFrame):
             if waited < 30:
                 return
             _trace(f"service startup timeout after {waited:.1f}s, force entering main page")
-            if self._loading_timer:
-                self._loading_timer.stop()
-                self._loading_timer = None
-            self.current_page = PAGE_MAIN
-            self._page_needs_redraw = True
-            self._render_and_display()
-            self._update_corner_labels()
-            return
+        else:
+            _trace("service ready, entering main page")
 
-        um = self.upgrade_manager
-        # 版本检查还在跑 → 继续等（最长等 15 秒，超时直接进主页）
-        if um.status == um.STATUS_CHECKING:
-            if waited < 15:
-                return
-            # 超时兜底
-            _trace(f"version check timeout after {waited:.1f}s, entering main page")
-        # 可以离开了
         if self._loading_timer:
             self._loading_timer.stop()
             self._loading_timer = None
-        if um.status == um.STATUS_AVAILABLE:
-            self.current_page = PAGE_UPGRADE_PROMPT
-            _trace("-> PAGE_UPGRADE_PROMPT (update available)")
-        else:
-            self.current_page = PAGE_MAIN
-            _trace(f"-> PAGE_MAIN (um.status={um.status})")
+        self.current_page = PAGE_MAIN
         self._page_needs_redraw = True
         self._render_and_display()
         self._update_corner_labels()
@@ -311,7 +295,7 @@ class CodingPage(AppFrame):
         um = self.upgrade_manager
         if um.status != self._last_upgrade_status:
             self._last_upgrade_status = um.status
-            if um.status in (um.STATUS_AVAILABLE, um.STATUS_NO_UPDATE, um.STATUS_FAILED):
+            if um.status in (um.STATUS_AVAILABLE, um.STATUS_NO_UPDATE, um.STATUS_FAILED, um.STATUS_SUCCESS):
                 if self.current_page == PAGE_MAIN:
                     self._page_needs_redraw = True
                     self._render_and_display()
@@ -970,6 +954,13 @@ class CodingPage(AppFrame):
         if self._loading_timer:
             self._loading_timer.stop()
             self._loading_timer = None
+        # 停止升级 HTTP API 服务
+        if hasattr(self, "_upgrade_server") and self._upgrade_server:
+            try:
+                self._upgrade_server.shutdown()
+                print("[coding] upgrade HTTP server stopped", flush=True)
+            except Exception as e:
+                print(f"[coding] upgrade server shutdown error: {e}", flush=True)
         if self.program_runner.check_alive():
             self.program_runner.stop()
         self.service_manager.stop()

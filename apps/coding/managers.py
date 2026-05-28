@@ -387,6 +387,11 @@ class UpgradeManager:
                 if self.status == self.STATUS_CHECKING:
                     self.status = self.STATUS_IDLE
 
+    def get_mirror_name(self):
+        """返回版本检查胜出镜像名称（tsinghua / pypi），未检查时返回空字符串。"""
+        idx = self._winning_mirror
+        return self.PYPI_MIRRORS[idx]["name"] if idx is not None else ""
+
     def start_upgrade(self):
         """开始升级（后台线程）。"""
         if self.status != self.STATUS_AVAILABLE:
