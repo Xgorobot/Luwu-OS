@@ -1191,13 +1191,6 @@ class RebootPage(AppFrame):
         self.la = load_language()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        self.icon_label = TitleLabel("🔄", self)
-        icon_font = QFont()
-        icon_font.setPointSize(36)
-        self.icon_label.setFont(icon_font)
-        self.icon_label.setColor(T_Color.accent)
-        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         self.title_label = TitleLabel("", self)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setWordWrap(True)
@@ -1221,8 +1214,7 @@ class RebootPage(AppFrame):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         w, h = self.width(), self.height()
-        self.icon_label.setGeometry(0, h // 2 - 90, w, 40)
-        self.title_label.setGeometry(20, h // 2 - 45, w - 40, 30)
+        self.title_label.setGeometry(20, h // 2 - 60, w - 40, 30)
         self.hint_label.setGeometry(20, h // 2 - 10, w - 40, 50)
 
     def keyPressEvent(self, ev: QKeyEvent):

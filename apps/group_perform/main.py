@@ -77,6 +77,10 @@ try:
             "status_perform": "表演中",
             "status_blocked": "等待时间同步",
             "action_list_title": "动作列表",
+            "mode_wan": "外网模式",
+            "mode_lan": "局域网模式",
+            "status_wan_chip": "当前：外网模式",
+            "status_lan_chip": "当前：局域网模式",
             "corner_switch": "◀▶ 切换",
             "corner_start": "开始",
             "corner_stop": "停止",
@@ -98,6 +102,10 @@ try:
             "status_perform": "Performing",
             "status_blocked": "Waiting time sync",
             "action_list_title": "Action List",
+            "mode_wan": "Internet",
+            "mode_lan": "LAN",
+            "status_wan_chip": "Mode: Internet",
+            "status_lan_chip": "Mode: LAN",
             "corner_switch": "◀▶ Switch",
             "corner_start": "Start",
             "corner_stop": "Stop",
@@ -126,6 +134,12 @@ DEVICE_TIMEOUT = 15.0
 ACTION_PREP_DELAY = 3.0
 AUTO_EXIT_SEC = 600
 
+# UDP 广播配置
+UDP_PORT = 5005
+UDP_BROADCAST_ADDR = "255.255.255.255"
+UDP_HEARTBEAT_INTERVAL = 3.0
+UDP_DEVICE_TIMEOUT = 12.0
+
 # NTP 同步配置
 NTP_SERVERS = ["ntp.aliyun.com", "ntp1.aliyun.com", "cn.pool.ntp.org", "pool.ntp.org"]
 NTP_TIMEOUT = 3.0
@@ -149,6 +163,15 @@ room_id = None
 local_ip = None
 dog = None
 dog_type = "R"
+
+# 通信模式："mqtt" 或 "udp"
+comm_mode = "mqtt"
+
+# UDP 状态
+udp_sock = None
+udp_listener_running = False
+udp_local_ip = None
+udp_room_prefix = None      # UDP 房间标识：子网前缀，如 "192.168.1"
 
 # 时间同步
 _time_offset = 0.0          # 软偏移：synced_time() = time.time() + _time_offset
@@ -640,6 +663,266 @@ def setup_mqtt():
         return False
 
 
+# ===================== UDP 广播群组通信 =====================
+
+
+def _udp_room_prefix_from_ip(ip):
+    """从 IP 提取子网前缀作为房间标识，如 192.168.1.100 → 192.168.1"""
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return ".".join(parts[:3])
+    return ip
+
+
+def _udp_send(msg):
+    """向广播地址发送一条 JSON 消息。"""
+    global udp_sock
+    if udp_sock is None:
+        return
+    try:
+        data = json.dumps(msg).encode("utf-8")
+        udp_sock.sendto(data, (UDP_BROADCAST_ADDR, UDP_PORT))
+    except Exception as e:
+        print(f"[UDP] 发送失败: {e}")
+
+
+def _udp_broadcast_presence(msg_type):
+    """广播 presence 消息（join / heartbeat / leave）。"""
+    _udp_send({
+        "type": msg_type,
+        "ip": udp_local_ip,
+        "dog_type": dog_type,
+        "room": udp_room_prefix,
+    })
+
+
+def _udp_broadcast_start():
+    """广播动作计划。"""
+    base_time = synced_time() + ACTION_PREP_DELAY
+    scheduled_actions = []
+    current_time = base_time
+    for act in actions_to_perform:
+        scheduled_actions.append({
+            "id": act["id"],
+            "name": act["name"],
+            "start_at": round(current_time, 3),
+            "duration": act["duration"]
+        })
+        current_time += act["duration"] + 0.5
+
+    _udp_send({
+        "type": "start",
+        "actions": scheduled_actions,
+        "music_start": round(base_time, 3),
+        "ip": udp_local_ip,
+    })
+    print(f"[UDP] 已广播动作计划, 共 {len(scheduled_actions)} 个动作")
+
+
+def _udp_broadcast_stop():
+    """广播停止指令。"""
+    _udp_send({"type": "stop", "ip": udp_local_ip})
+
+
+def _udp_broadcast_exit():
+    """广播退出指令。"""
+    _udp_send({"type": "exit", "ip": udp_local_ip})
+
+
+def _udp_handle_message(data, addr):
+    """处理收到的 UDP 消息。"""
+    global group_perform, action_plan, exitmark, proc
+
+    msg_type = data.get("type")
+    sender_ip = data.get("ip", addr[0])
+    sender_room = data.get("room", "")
+
+    # 房间隔离：只处理同子网的消息
+    if sender_room and sender_room != udp_room_prefix:
+        return
+
+    if msg_type in ("join", "heartbeat"):
+        with known_devices_lock:
+            is_new = sender_ip not in known_devices
+            known_devices[sender_ip] = {
+                "dog_type": data.get("dog_type", "?"),
+                "last_seen": time.time()
+            }
+        if is_new and msg_type == "join":
+            print(f"[UDP] 新设备加入: {sender_ip} (型号: {data.get('dog_type', '?')})")
+
+        # 收到 join 时立即回复 heartbeat，加速发现
+        if msg_type == "join" and sender_ip != udp_local_ip:
+            def _reply_hb():
+                try:
+                    _udp_broadcast_presence("heartbeat")
+                except Exception:
+                    pass
+            threading.Timer(random.uniform(0.05, 0.3), _reply_hb).start()
+
+    elif msg_type == "leave":
+        with known_devices_lock:
+            known_devices.pop(sender_ip, None)
+        print(f"[UDP] 设备离开: {sender_ip}")
+
+    elif msg_type == "stop":
+        print("[UDP-CMD] 收到停止指令")
+        group_perform = False
+        action_plan = None
+        with proc_lock:
+            if proc is not None:
+                kill_proc_safe(proc)
+                proc = None
+        force_kill_all_mplayer()
+
+    elif msg_type == "exit":
+        print("[UDP-CMD] 收到退出指令（仅停止表演）")
+        group_perform = False
+        action_plan = None
+        with proc_lock:
+            if proc is not None:
+                kill_proc_safe(proc)
+                proc = None
+        force_kill_all_mplayer()
+
+    elif msg_type == "start":
+        actions = data.get("actions", [])
+        music_start = data.get("music_start", 0)
+        if not actions:
+            return
+
+        now = synced_time()
+        wait = music_start - now
+        sync_tag = "OK" if _sync_status == SYNC_OK else (
+            "WAIT" if _sync_status == SYNC_WAIT else "FAIL")
+        print(f"[UDP-PLAN] 收到计划: {len(actions)} 动作, music_start={music_start:.3f}, "
+              f"本机now={now:.3f}, wait={wait:.2f}s [sync={sync_tag}]")
+
+        if _sync_status != SYNC_OK:
+            print("[UDP-PLAN] 本机时间未同步, 触发立即重新同步")
+            start_time_sync()
+
+        if wait < -2.0:
+            print(f"[UDP-PLAN] 计划已过期 wait={wait:.2f}s, 拒绝执行")
+            return
+        if wait > 30.0:
+            print(f"[UDP-PLAN] 偏差过大 wait={wait:.2f}s, 拒绝执行")
+            return
+
+        action_plan = {
+            "actions": actions,
+            "music_start": music_start
+        }
+        group_perform = True
+
+
+def _udp_listener():
+    """UDP 监听线程：接收广播消息。"""
+    global udp_sock, udp_listener_running, exitmark
+    udp_listener_running = True
+    print(f"[UDP] 监听启动: 0.0.0.0:{UDP_PORT}")
+    while not exitmark and udp_listener_running:
+        try:
+            data, addr = udp_sock.recvfrom(4096)
+            if exitmark:
+                break
+            try:
+                msg = json.loads(data.decode("utf-8"))
+            except Exception:
+                continue
+            # 忽略自己发出的 presence 消息（join/heartbeat/leave），
+            # 但放行 start/stop/exit，保证发起方自己也能执行
+            sender_ip = msg.get("ip", addr[0])
+            msg_type = msg.get("type", "")
+            if sender_ip == udp_local_ip and msg_type in ("join", "heartbeat", "leave"):
+                continue
+            _udp_handle_message(msg, addr)
+        except socket.timeout:
+            continue
+        except Exception as e:
+            if not exitmark:
+                print(f"[UDP] 监听异常: {e}")
+            time.sleep(0.5)
+    print("[UDP] 监听线程退出")
+
+
+def _udp_heartbeat():
+    """UDP 心跳线程：周期性广播 presence + 清理超时设备。"""
+    while not exitmark and comm_mode == "udp":
+        _udp_broadcast_presence("heartbeat")
+        now = time.time()
+        with known_devices_lock:
+            # 刷新本机时间戳，防止被超时清理
+            if udp_local_ip in known_devices:
+                known_devices[udp_local_ip]["last_seen"] = now
+            offline = [ip for ip, info in known_devices.items()
+                       if now - info["last_seen"] > UDP_DEVICE_TIMEOUT]
+            for ip in offline:
+                del known_devices[ip]
+                print(f"[UDP] 设备超时离线: {ip}")
+        time.sleep(UDP_HEARTBEAT_INTERVAL)
+
+
+def setup_udp():
+    """初始化 UDP 广播通信。"""
+    global udp_sock, udp_local_ip, udp_room_prefix, udp_listener_running
+
+    udp_local_ip = get_local_ip()
+    udp_room_prefix = _udp_room_prefix_from_ip(udp_local_ip)
+
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp_sock.settimeout(1.0)
+    try:
+        udp_sock.bind(("0.0.0.0", UDP_PORT))
+    except OSError as e:
+        print(f"[UDP] 端口绑定失败: {e}")
+        udp_sock.close()
+        udp_sock = None
+        return False
+
+    print(f"[UDP] 广播就绪: {udp_local_ip} → {UDP_BROADCAST_ADDR}:{UDP_PORT}, 房间: {udp_room_prefix}")
+
+    # 将本机注册到设备列表
+    with known_devices_lock:
+        known_devices[udp_local_ip] = {
+            "dog_type": dog_type,
+            "last_seen": time.time()
+        }
+
+    # 启动监听线程
+    threading.Thread(target=_udp_listener, daemon=True).start()
+
+    # 发送 join
+    _udp_broadcast_presence("join")
+    # 1.5s 后补发一次，对抗丢包
+    threading.Timer(1.5, lambda: _udp_broadcast_presence("heartbeat")).start()
+
+    # 启动心跳线程
+    threading.Thread(target=_udp_heartbeat, daemon=True).start()
+
+    return True
+
+
+def teardown_udp():
+    """关闭 UDP 通信。"""
+    global udp_sock, udp_listener_running
+    udp_listener_running = False
+    if udp_sock:
+        try:
+            _udp_broadcast_presence("leave")
+            time.sleep(0.15)
+        except Exception:
+            pass
+        try:
+            udp_sock.close()
+        except Exception:
+            pass
+        udp_sock = None
+    print("[UDP] 已关闭")
+
+
 # ===================== 后台线程 =====================
 
 
@@ -744,7 +1027,65 @@ def action_executor():
         print("[EXEC] 动作执行结束")
 
 
-# ===================== PySide6 页面 =====================
+# ===================== 模式切换 =====================
+
+
+def switch_comm_mode():
+    """切换通信模式：MQTT ↔ UDP。"""
+    global comm_mode
+    old_mode = comm_mode
+
+    if old_mode == "mqtt":
+        # 断开 MQTT
+        if mqtt_client:
+            try:
+                publish_presence("leave")
+                time.sleep(0.15)
+            except Exception:
+                pass
+            try:
+                mqtt_client.loop_stop()
+                mqtt_client.disconnect()
+            except Exception:
+                pass
+        print("[MODE] MQTT 已断开, 切换到 UDP 广播模式")
+
+        # 清空设备列表（MQTT 和 UDP 的设备不互通）
+        with known_devices_lock:
+            known_devices.clear()
+
+        comm_mode = "udp"
+        if not setup_udp():
+            print("[MODE] UDP 初始化失败, 回退到 MQTT")
+            comm_mode = "mqtt"
+            # 重新连接 MQTT
+            if not check_network():
+                print("[MODE] 网络不可用, MQTT 重连延迟")
+            elif setup_mqtt():
+                threading.Thread(target=heartbeat_thread, daemon=True).start()
+            return False
+        print("[MODE] ✅ 已切换到 UDP 广播模式")
+        return True
+
+    else:  # old_mode == "udp"
+        # 断开 UDP
+        teardown_udp()
+        print("[MODE] UDP 已断开, 切换到 MQTT 模式")
+
+        # 清空设备列表
+        with known_devices_lock:
+            known_devices.clear()
+
+        comm_mode = "mqtt"
+        if not check_network():
+            print("[MODE] 网络不可用, MQTT 连接延迟")
+        elif setup_mqtt():
+            threading.Thread(target=heartbeat_thread, daemon=True).start()
+        print("[MODE] ✅ 已切换到 MQTT 模式")
+        return True
+
+
+# ===================== PySide6 页面 ==================== 
 
 
 class GroupPerformPage(AppFrame):
@@ -854,6 +1195,7 @@ class GroupPerformPage(AppFrame):
         # ---- 角标 ----
         self.setCornerHints(
             bl=(_T("corner_exit"), T_Asset.icon_back),
+            tr=(_T("mode_lan"), T_Asset.icon_right),
             br=(_T("corner_start"), T_Asset.icon_enter),
         )
 
@@ -891,7 +1233,10 @@ class GroupPerformPage(AppFrame):
         # 房间卡片
         with known_devices_lock:
             count = len(known_devices)
-        if room_id:
+
+        if comm_mode == "udp" and udp_room_prefix:
+            self.room_label.setText(_T("room", udp_room_prefix))
+        elif comm_mode == "mqtt" and room_id:
             self.room_label.setText(_T("room", room_id))
         else:
             self.room_label.setText(_T("room_wait"))
@@ -899,13 +1244,21 @@ class GroupPerformPage(AppFrame):
             f"{_T('devices', count)}  ·  {_T('dog_type', dog_type)}"
         )
 
-        # MQTT chip
-        if mqtt_client and mqtt_client.is_connected():
-            self.mqtt_chip.setText(_T("mqtt_ok"))
-            self.mqtt_chip.setStyleSheet(T_qss.chip("success"))
+        # 通信 chip（根据当前模式显示状态）
+        if comm_mode == "udp":
+            if udp_sock is not None:
+                self.mqtt_chip.setText(_T("status_lan_chip"))
+                self.mqtt_chip.setStyleSheet(T_qss.chip("success"))
+            else:
+                self.mqtt_chip.setText(_T("status_lan_chip"))
+                self.mqtt_chip.setStyleSheet(T_qss.chip("danger"))
         else:
-            self.mqtt_chip.setText(_T("mqtt_bad"))
-            self.mqtt_chip.setStyleSheet(T_qss.chip("danger"))
+            if mqtt_client and mqtt_client.is_connected():
+                self.mqtt_chip.setText(_T("status_wan_chip"))
+                self.mqtt_chip.setStyleSheet(T_qss.chip("success"))
+            else:
+                self.mqtt_chip.setText(_T("status_wan_chip"))
+                self.mqtt_chip.setStyleSheet(T_qss.chip("danger"))
 
         # 同步 chip
         if _sync_status == SYNC_OK:
@@ -918,13 +1271,22 @@ class GroupPerformPage(AppFrame):
             self.sync_chip.setText(_T("sync_fail"))
             self.sync_chip.setStyleSheet(T_qss.chip("danger"))
 
-        # 网络 chip——正常不显示，异常时红字提示
-        if not check_network():
-            self.net_chip.setText(_T("net_bad"))
-            self.net_chip.setStyleSheet(T_qss.chip("danger"))
-            self.net_chip.show()
+        # 网络 chip——UDP 模式下不需要外网，只检查本地网络；MQTT 模式下需要外网
+        if comm_mode == "udp":
+            # UDP 模式：只要本机有 IP 即可
+            if udp_local_ip and udp_local_ip != "127.0.0.1":
+                self.net_chip.hide()
+            else:
+                self.net_chip.setText(_T("net_bad"))
+                self.net_chip.setStyleSheet(T_qss.chip("danger"))
+                self.net_chip.show()
         else:
-            self.net_chip.hide()
+            if not check_network():
+                self.net_chip.setText(_T("net_bad"))
+                self.net_chip.setStyleSheet(T_qss.chip("danger"))
+                self.net_chip.show()
+            else:
+                self.net_chip.hide()
 
         # 表演状态 + D 角标文案
         if group_perform:
@@ -939,6 +1301,10 @@ class GroupPerformPage(AppFrame):
             self.status_label.setText(_T("status_idle"))
             self.status_label.setStyleSheet(self._status_qss(T_Color.success))
             self.setCornerHint("br", _T("corner_start"), T_Asset.icon_enter)
+
+        # TR 角标：显示按下 B 键后切换到的目标模式
+        target_label = _T("mode_wan") if comm_mode == "udp" else _T("mode_lan")
+        self.setCornerHint("tr", target_label, T_Asset.icon_right)
 
     def _check_performance(self):
         """监控表演状态，触发动作执行"""
@@ -980,12 +1346,19 @@ class GroupPerformPage(AppFrame):
             # C 键 → 退出
             print("[group] KEY_BACK -> exit", flush=True)
             self.close()
+        elif ev.key() == Qt.Key.Key_Right:
+            # B 键 → 切换通信模式（MQTT ↔ UDP）
+            print(f"[group] KEY_RIGHT -> switch mode (current: {comm_mode})", flush=True)
+            threading.Thread(target=switch_comm_mode, daemon=True).start()
         elif ev.key() == Qt.Key.Key_Return:
             # D 键 → 开始/停止
             global group_perform
             if group_perform:
                 print("[group] KEY_RETURN -> stop", flush=True)
-                publish_stop()
+                if comm_mode == "udp":
+                    _udp_broadcast_stop()
+                else:
+                    publish_stop()
             else:
                 # 未同步时不允许开始，同时触发一次重试
                 if _sync_status != SYNC_OK:
@@ -994,7 +1367,10 @@ class GroupPerformPage(AppFrame):
                         start_time_sync()
                     return
                 print("[group] KEY_RETURN -> start", flush=True)
-                publish_start()
+                if comm_mode == "udp":
+                    _udp_broadcast_start()
+                else:
+                    publish_start()
 
     def closeEvent(self, ev):
         global exitmark
@@ -1008,14 +1384,19 @@ class GroupPerformPage(AppFrame):
         self._refresh_timer.stop()
         self._perf_monitor.stop()
 
-        publish_exit()
-        time.sleep(0.3)
-
-        if mqtt_client:
-            publish_presence("leave")
+        if comm_mode == "udp":
+            _udp_broadcast_exit()
             time.sleep(0.2)
-            mqtt_client.loop_stop()
-            mqtt_client.disconnect()
+            teardown_udp()
+        else:
+            publish_exit()
+            time.sleep(0.3)
+
+            if mqtt_client:
+                publish_presence("leave")
+                time.sleep(0.2)
+                mqtt_client.loop_stop()
+                mqtt_client.disconnect()
 
         with proc_lock:
             if proc is not None:

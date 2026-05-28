@@ -1,7 +1,6 @@
 [Unit]
 Description=Luwu OS Hardware Auto-Config (CM4 new/old detection)
-After=multi-user.target
-Wants=network.target
+After=local-fs.target luwu-splash.service
 
 [Service]
 Type=oneshot

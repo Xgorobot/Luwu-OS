@@ -293,7 +293,7 @@ def handle_down(data):
 def handle_left(data):
     val = int(data)
     if isinstance(dog, XGO_RIDER):
-        executor.submit(execute_action, dog.turn, val)
+        executor.submit(execute_action, dog.rider_turn, 90)
     else:
         executor.submit(execute_action, dog.move_y, val)
 
@@ -302,7 +302,7 @@ def handle_left(data):
 def handle_right(data):
     val = int(data)
     if isinstance(dog, XGO_RIDER):
-        executor.submit(execute_action, dog.turn, val)
+        executor.submit(execute_action, dog.rider_turn, -90)
     else:
         executor.submit(execute_action, dog.move_y, val)
 

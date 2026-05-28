@@ -43,7 +43,7 @@ static QString luwuRoot() {
 }
 
 // 记住用户上次在主菜单选中的卡片索引，下次启动自动恢复
-static constexpr const char *LAST_CARD_FILE_REL = "/configs/last_card";
+static constexpr const char *LAST_CARD_FILE_REL = "/.state/last_card";
 
 static void saveLastCardIndex(int idx) {
     // 只记录图形化编程(1)和AI交互(2)，配网/示例/设置不需要记住
@@ -117,6 +117,10 @@ int main(int argc, char *argv[]) {
     QTimer *pendingLaunchTimer = new QTimer(&stack);
     pendingLaunchTimer->setSingleShot(true);
 
+    // 电池定时读取（提前声明，供后面 lambdas 捕获）
+    QTimer   *batteryTimer = new QTimer(&stack);
+    QProcess *batteryProc  = new QProcess(&stack);
+
     // 非阻塞模式向 preload FIFO 写入脚本路径；返回 true 表示成功
     auto tryFirePreload = [&](const QString &script) -> bool {
         int fd = ::open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
@@ -157,6 +161,15 @@ int main(int argc, char *argv[]) {
             pendingLaunchTimer->stop();
             pendingLaunchScript.clear();
             keyFilter->blocked = false;
+            // 回到桌面，恢复电池定时读取，并立即拿一次当前电量
+            batteryTimer->start(60000);
+            QTimer::singleShot(200, [batteryProc]() {
+                if (batteryProc->state() == QProcess::NotRunning) {
+                    batteryProc->setProgram("python3");
+                    batteryProc->setArguments({luwuRoot() + "/configs/luwu-undervolt-monitor.py"});
+                    batteryProc->start();
+                }
+            });
             unlink(KEYS_FIFO);
             // 恢复桌面显示：先 show + force paint，再切回进入前的页面
             stack.showFullScreen();
@@ -179,6 +192,10 @@ int main(int argc, char *argv[]) {
         });
 
     auto launchApp = [&](const QString &script) {
+        // 暂停电池定时读取，避免与 app 争串口
+        batteryTimer->stop();
+        if (batteryProc->state() != QProcess::NotRunning) batteryProc->kill();
+
         if (preloadProc->state() == QProcess::NotRunning) {
             qDebug() << "[luwu-launcher] preload not running, restarting...";
             startPreload();
@@ -424,6 +441,23 @@ int main(int argc, char *argv[]) {
     QObject::connect(gallery->animationTimer(), &QTimer::timeout, statusBar, [statusBar]() {
         statusBar->raise();
         statusBar->update();
+    });
+
+    // --- 电池电量定时读取：QTimer + QProcess 替代 systemd 服务 ---
+    // 每 60 秒调一次一次性 Python 脚本，读完即退出，不占用串口
+    QObject::connect(batteryTimer, &QTimer::timeout, [batteryProc]() {
+        if (batteryProc->state() == QProcess::NotRunning) {
+            batteryProc->setProgram("python3");
+            batteryProc->setArguments({luwuRoot() + "/configs/luwu-undervolt-monitor.py"});
+            batteryProc->start();
+        }
+    });
+    batteryTimer->start(60000);
+    // 启动后立即读一次电量
+    QTimer::singleShot(10, [batteryProc]() {
+        batteryProc->setProgram("python3");
+        batteryProc->setArguments({luwuRoot() + "/configs/luwu-undervolt-monitor.py"});
+        batteryProc->start();
     });
 
     int rc = app.exec();

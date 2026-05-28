@@ -33,7 +33,7 @@ static const DemoItem DEMOS[] = {
     {"小球抓取", "Ball Catch",  "#50C878", "apps/ball_catch/main.py",    "demo_ball_track.png", "@dog,!xgorider"},
     {"手柄控制", "Gamepad",     "#FFD93D", "apps/gamepad/main.py",        "demo_gamepad.png",    "*"},
     {"雷达扫描", "Radar",       "#2ECC71", "apps/radar/main.py",         "demo_radar.png",      "*"},
-    {"声源定位", "Sound Locate","#1ABC9C", "apps/sound_locate/main.py",  "demo_sound.png",      "*"},
+    {"声源定位", "Sound Locate","#1ABC9C", "apps/sound_locate/main.py",  "demo_sound.png",      "@--"},  // 暂时隐藏，调试中
 };
 static constexpr int DEMO_TOTAL = sizeof(DEMOS) / sizeof(DEMOS[0]);
 

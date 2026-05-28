@@ -1,96 +1,379 @@
 #!/usr/bin/env python3
 """
-声源定位 App — 由 Luwu OS launcher 启动。
+Sound Locate — 声源定位 App（无风扇环境专用）
 
-利用板载 WM8960 双麦克风（L/R 立体声）实时采集音频，
-比较左右声道能量，在屏幕上展示能量柱状图，
-并控制机器狗向声源方向转身。
+利用 WM8960 双麦克风立体声采集，通过人声频段能量对比判定声源方向，
+驱动 XGO 机器狗向声源方向转身。
 
-按键映射:
-  A (左上 / KEY_LEFT)   → 开始/暂停 自动追踪
-  B (右上 / KEY_RIGHT)  → 灵敏度调节（低/中/高）
-  C (左下 / KEY_BACK)   → 退出
-  D (右下 / KEY_ENTER)  → 手动转身一次（向能量大的方向转）
+信号处理链：
+  PyAudio 16-bit 立体声采集
+  → FFT 带通滤波 (300–3400 Hz，人声频段)
+  → RMS 能量计算 + EMA 平滑
+  → 左右声道能量差 → 方向判定（含迟滞）
+
+按键映射：
+  A (左上 / KEY_LEFT)  → 自动追踪 开/关
+  B (右上 / KEY_RIGHT) → 灵敏度切换（低/中/高）
+  C (左下 / KEY_BACK)  → 退出
+  D (右下 / KEY_ENTER) → 手动转身一次
+
+无风扇环境下噪声基底稳定，仅需简单启动校准即可。
 """
 import os
 import sys
-import struct
 import signal
 import threading
 import time
 import math
+import logging
+from enum import Enum, auto
+from typing import Optional, Tuple
+
 import numpy as np
 
 # ---- PySide6 ----
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QPainter, QColor, QFont, QPen, QBrush, QLinearGradient
-from PySide6.QtWidgets import QApplication, QWidget, QLabel
+from PySide6.QtCore import Qt, QTimer, QObject, Signal, QSocketNotifier
+from PySide6.QtGui import (
+    QKeyEvent, QPainter, QColor, QFont, QPen, QBrush, QLinearGradient,
+)
+from PySide6.QtWidgets import QApplication, QLabel
 
-# ---- luwu-os libs ----
+# ---- luwu-os ----
 LUWU_ROOT = os.environ.get("LUWU_ROOT", "/opt/luwu-os")
 if LUWU_ROOT not in sys.path:
     sys.path.insert(0, LUWU_ROOT)
 from libs.ui.frame import AppFrame
-from libs.theme import apply_app_palette, Asset, Color, Spacing
+from libs.theme import apply_app_palette, Asset, Color, hex_to_rgb
 
-# ---- FIFO 路径 ----
-KEYS_FIFO = "/tmp/luwu_keys.fifo"
-from PySide6.QtCore import QSocketNotifier
+# ============================================================================
+# 日志
+# ============================================================================
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[sound_locate] %(asctime)s %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+log = logging.getLogger("sound_locate")
 
-# ---- 常量 ----
+# ============================================================================
+# 常量
+# ============================================================================
 SCREEN_W, SCREEN_H = 320, 240
-RATE = 16000            # 采样率
-CHANNELS = 2            # 立体声
-CHUNK = 1600            # 每次读取帧数 (100ms @ 16kHz)
-FORMAT_WIDTH = 2        # 16-bit = 2 bytes
-AUTO_EXIT_SEC = 300     # 5分钟自动退出
-ENERGY_HISTORY = 20     # 能量历史长度（平滑用）
+SAMPLE_RATE = 16000
+CHANNELS = 2
+CHUNK_SIZE = 1600          # 100 ms @ 16 kHz
+AUTO_EXIT_SEC = 300        # 5 分钟自动退出
+KEYS_FIFO = "/tmp/luwu_keys.fifo"
 
-# 转身参数
-TURN_SPEED = 25         # 转身速度
-TURN_DURATION = 0.3     # 转身持续时间(秒)
-ENERGY_THRESHOLD_DB = 3.0  # 左右差异阈值(dB)，超过才转身
+# 人声带通范围
+VOICE_LO_HZ = 300
+VOICE_HI_HZ = 3400
 
-# 灵敏度预设
-SENSITIVITY_PRESETS = [
-    ("低", 6.0),   # 需要 6dB 差异才转
-    ("中", 3.0),   # 需要 3dB 差异才转
-    ("高", 1.5),   # 需要 1.5dB 差异就转
-]
+# 机器人转身参数
+TURN_SPEED = 25            # 转身速度
+TURN_DURATION_S = 0.3      # 单次转身时长
 
-TAG = "[sound_locate]"
+# 方向判定迟滞 (dB) —— 避免在阈值附近反复抖动
+HYSTERESIS_DB = 1.0
 
-
-VOICE_LO = 300
-VOICE_HI = 3400
-
-def _voice_extract(samples: np.ndarray, rate: int) -> np.ndarray:
-    """FFT 砖墙带通滤波器：仅保留 300-3400Hz 人声频段，其余频段置零。"""
-    n = len(samples)
-    fft = np.fft.rfft(samples.astype(np.float64))
-    freq_per_bin = rate / n
-    lo_bin = max(0, int(VOICE_LO / freq_per_bin))
-    hi_bin = min(len(fft) - 1, int(VOICE_HI / freq_per_bin))
-    fft[:lo_bin] = 0
-    fft[hi_bin + 1:] = 0
-    return np.fft.irfft(fft, n=n).real.astype(np.float64)
+# dB 显示范围
+DB_FLOOR = -60.0
+DB_CEIL = 0.0
 
 
-def _rms_db(samples: np.ndarray) -> float:
-    """RMS → dB."""
-    if len(samples) == 0:
-        return -100.0
-    rms = math.sqrt(np.mean(samples.astype(np.float64) ** 2))
-    if rms < 1e-6:
-        return -100.0
-    return 20.0 * math.log10(rms / 32768.0)
+class Sensitivity(Enum):
+    """灵敏度级别。"""
+    LOW = ("低", 6.0)
+    MEDIUM = ("中", 3.0)
+    HIGH = ("高", 1.5)
 
+    @property
+    def label(self) -> str:
+        return self.value[0]
+
+    @property
+    def threshold_db(self) -> float:
+        return self.value[1]
+
+    def next(self) -> "Sensitivity":
+        members = list(Sensitivity)
+        idx = members.index(self)
+        return members[(idx + 1) % len(members)]
+
+
+class Direction(Enum):
+    """声源方向。"""
+    NONE = auto()
+    LEFT = auto()
+    RIGHT = auto()
+
+
+# ============================================================================
+# 信号处理
+# ============================================================================
+
+class VoiceBandFilter:
+    """FFT 砖墙带通滤波器：仅保留人声频段 (300–3400 Hz)。
+
+    相比 IIR 滤波器，FFT 方法在 Python 中实现简单、不依赖 scipy，
+    且对于 100ms 帧长（1600 点）计算开销极低。
+    """
+
+    def __init__(self, sample_rate: int):
+        self._sample_rate = sample_rate
+
+    def apply(self, signal: np.ndarray) -> np.ndarray:
+        """对一维信号做带通滤波，返回滤波后的时域信号。"""
+        n = len(signal)
+        if n < 2:
+            return signal
+        fft = np.fft.rfft(signal.astype(np.float64))
+        freq_per_bin = self._sample_rate / n
+        lo = max(0, int(VOICE_LO_HZ / freq_per_bin))
+        hi = min(len(fft) - 1, int(VOICE_HI_HZ / freq_per_bin))
+        fft[:lo] = 0.0
+        fft[hi + 1:] = 0.0
+        return np.fft.irfft(fft, n=n).real.astype(np.float64)
+
+
+class EnergyTracker:
+    """能量追踪器：RMS → dB + EMA 平滑。"""
+
+    def __init__(self, ema_alpha: float = 0.15):
+        self._alpha = ema_alpha
+        self._db_smoothed: Optional[float] = None
+
+    def update(self, signal: np.ndarray) -> float:
+        """给定一帧信号，返回平滑后的 dB 值。"""
+        rms = self._compute_rms(signal)
+        db = self._rms_to_db(rms)
+        if self._db_smoothed is None:
+            self._db_smoothed = db
+        else:
+            self._db_smoothed = self._alpha * db + (1 - self._alpha) * self._db_smoothed
+        return self._db_smoothed
+
+    def reset(self) -> None:
+        self._db_smoothed = None
+
+    @staticmethod
+    def _compute_rms(signal: np.ndarray) -> float:
+        n = len(signal)
+        if n == 0:
+            return 0.0
+        return math.sqrt(np.mean(signal.astype(np.float64) ** 2))
+
+    @staticmethod
+    def _rms_to_db(rms: float) -> float:
+        if rms < 1e-6:
+            return DB_FLOOR
+        return 20.0 * math.log10(rms / 32768.0)
+
+
+class DirectionEstimator:
+    """方向估计器。
+
+    基于左右声道能量差做方向判定，带迟滞以防止边界抖动。
+    """
+
+    def __init__(self, threshold_db: float = 3.0, hysteresis_db: float = HYSTERESIS_DB):
+        self._threshold = threshold_db
+        self._hysteresis = hysteresis_db
+        self._prev_direction = Direction.NONE
+
+    @property
+    def threshold(self) -> float:
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value: float) -> None:
+        self._threshold = value
+
+    def update(self, left_db: float, right_db: float) -> Tuple[Direction, float]:
+        """返回 (方向, 修正后的差值)。"""
+        diff = left_db - right_db
+
+        # 带迟滞的阈值比较
+        if self._prev_direction == Direction.LEFT:
+            on_threshold = self._threshold - self._hysteresis
+        elif self._prev_direction == Direction.RIGHT:
+            on_threshold = self._threshold - self._hysteresis
+        else:
+            on_threshold = self._threshold
+
+        if diff > on_threshold:
+            direction = Direction.LEFT
+        elif diff < -on_threshold:
+            direction = Direction.RIGHT
+        else:
+            direction = Direction.NONE
+
+        self._prev_direction = direction
+        return direction, diff
+
+
+# ============================================================================
+# 音频采集引擎（后台线程）
+# ============================================================================
+
+class AudioEngine(QObject):
+    """音频采集 + 信号处理引擎。
+
+    在独立线程中运行，通过 Qt Signal 将处理结果发送到 GUI 线程。
+    """
+
+    #: 发射 (left_db, right_db, direction, diff)
+    processed = Signal(float, float, int, float)
+
+    def __init__(self, parent: QObject = None):
+        super().__init__(parent)
+        self._running = False
+        self._filter = VoiceBandFilter(SAMPLE_RATE)
+        self._tracker_l = EnergyTracker()
+        self._tracker_r = EnergyTracker()
+
+    def start(self) -> None:
+        self._running = True
+        t = threading.Thread(target=self._run, daemon=True, name="audio-engine")
+        t.start()
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _run(self) -> None:
+        import pyaudio
+        pa: Optional[pyaudio.PyAudio] = None
+        stream: Optional[pyaudio.Stream] = None
+        try:
+            pa = pyaudio.PyAudio()
+            # 不指定 input_device_index，走 default PCM → dsnoop → hw:0,0
+            # 这样才能与其他 App 同时录音（见 HARDWARE_PLAN.md 改造 5）
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK_SIZE,
+            )
+            log.info("audio stream opened (rate=%d, ch=%d) via default/dsnoop",
+                     SAMPLE_RATE, CHANNELS)
+
+            frame_no = 0
+            while self._running:
+                frame_no += 1
+                try:
+                    raw = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                except OSError:
+                    continue
+
+                samples = np.frombuffer(raw, dtype=np.int16)
+                left_raw = samples[0::2]
+                right_raw = samples[1::2]
+
+                # 带通滤波 → 能量 → dB
+                voice_l = self._filter.apply(left_raw)
+                voice_r = self._filter.apply(right_raw)
+                left_db = self._tracker_l.update(voice_l)
+                right_db = self._tracker_r.update(voice_r)
+
+                # 粗方向 (仅用于日志)
+                if abs(left_db - right_db) < 2.0:
+                    dir_int = 0
+                else:
+                    dir_int = 1 if left_db > right_db else -1
+
+                self.processed.emit(left_db, right_db, dir_int, left_db - right_db)
+
+                if frame_no % 10 == 0:
+                    log.debug(
+                        "#%d L=%5.1f R=%5.1f  diff=%+5.1f",
+                        frame_no, left_db, right_db, left_db - right_db,
+                    )
+
+        except Exception:
+            log.exception("audio engine fatal error")
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            if pa is not None:
+                try:
+                    pa.terminate()
+                except Exception:
+                    pass
+            log.info("audio engine stopped")
+
+
+# ============================================================================
+# 机器人驱动
+# ============================================================================
+
+class RobotDriver:
+    """XGO 机器狗运动驱动，封装串口实例化与线程安全控制。"""
+
+    def __init__(self):
+        self._dog: object = None
+        self._lock = threading.Lock()
+        self._init_thread = threading.Thread(
+            target=self._connect, daemon=True, name="robot-init",
+        )
+        self._init_thread.start()
+
+    @property
+    def ready(self) -> bool:
+        return self._dog is not None
+
+    def _connect(self) -> None:
+        try:
+            from xgolib import XGO
+            self._dog = XGO()
+            log.info("XGO connected")
+        except Exception:
+            log.warning("XGO init failed (robot may be absent)")
+            self._dog = None
+
+    def turn(self, direction: Direction) -> None:
+        """非阻塞：在后台线程执行一次向指定方向的转身。
+
+        如果上一次转身尚未完成则跳过本次请求。
+        """
+        if self._dog is None or direction == Direction.NONE:
+            return
+        if not self._lock.acquire(blocking=False):
+            return  # 上一次转身还在执行
+
+        sign = -1 if direction == Direction.LEFT else 1
+
+        def _do():
+            try:
+                self._dog.turn(TURN_SPEED * sign)
+                time.sleep(TURN_DURATION_S)
+                self._dog.turn(0)
+            except Exception:
+                log.exception("turn failed")
+            finally:
+                self._lock.release()
+
+        threading.Thread(target=_do, daemon=True, name="robot-turn").start()
+
+    def stop(self) -> None:
+        if self._dog is not None:
+            try:
+                self._dog.turn(0)
+            except Exception:
+                pass
+
+
+# ============================================================================
+# GUI 主页面
+# ============================================================================
 
 class SoundLocatePage(AppFrame):
     """声源定位主界面。"""
-
-    # 从录音线程发射到 GUI 线程
-    energy_updated = Signal(float, float, int)  # left_db, right_db, crosscorr_dir
 
     def __init__(self):
         super().__init__()
@@ -104,398 +387,278 @@ class SoundLocatePage(AppFrame):
 
         # ---- 状态 ----
         self._auto_track = False
-        self._sensitivity_idx = 1  # 默认"中"
-        self._threshold = SENSITIVITY_PRESETS[1][1]
-        self._left_db = -60.0
-        self._right_db = -60.0
-        self._direction = ""
-        self._running = True
-        self._dog = None
-        self._dog_busy = False
+        self._sensitivity = Sensitivity.MEDIUM
+        self._left_db = DB_FLOOR
+        self._right_db = DB_FLOOR
+        self._diff = 0.0
+        self._direction = Direction.NONE
 
-        # 瞬态检测：EWMA 追踪稳态噪声基线，只响应急剧增量
-        self._ewma_l = -60.0
-        self._ewma_r = -60.0
-        self._ewma_alpha = 0.05
-        self._spike_thresh = 3.0
+        # 方向估计器
+        self._estimator = DirectionEstimator(self._sensitivity.threshold_db)
 
-        # 启动校准：采集差值样本初始化 EWMA
-        self._cal_offset = 0.0
-        self._cal_samples = []
-        self._cal_done = False
-        self._cal_countdown = 20
+        # 机器人
+        self._robot = RobotDriver()
 
         # ---- 状态标签 ----
-        self._status = QLabel("校准中: 静默2秒...", self)
-        self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status.setStyleSheet(
+        self._status_label = QLabel("就绪", self)
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.setStyleSheet(
             "color: #1a2b5e; font-size: 11px; background: transparent;"
         )
 
-        # ---- 信号连接 ----
-        self.energy_updated.connect(self._on_energy)
-
-        # ---- 录音线程 ----
-        self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True)
-        self._mic_thread.start()
-
-        # ---- 初始化机器狗 (后台) ----
-        self._dog_thread = threading.Thread(target=self._init_dog, daemon=True)
-        self._dog_thread.start()
+        # ---- 音频引擎 ----
+        self._audio = AudioEngine()
+        self._audio.processed.connect(self._on_audio_frame)
+        self._audio.start()
 
         # ---- FIFO 按键 ----
-        self._setup_keys_fifo()
+        self._setup_fifo()
 
-        # ---- 自动退出 ----
+        # ---- 定时器 ----
         self._exit_timer = QTimer(self)
         self._exit_timer.setSingleShot(True)
         self._exit_timer.timeout.connect(self.close)
         self._exit_timer.start(AUTO_EXIT_SEC * 1000)
 
-        # ---- 刷新定时器 (30fps 重绘) ----
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self.update)
-        self._paint_timer.start(33)
+        self._paint_timer.start(33)  # ~30 fps
 
-        print(f"{TAG} init done", flush=True)
+        log.info("page initialized")
 
-    # ================================================================ Dog
-    def _init_dog(self):
-        try:
-            from xgolib import XGO
-            self._dog = XGO()
-            print(f"{TAG} XGO connected", flush=True)
-        except Exception as e:
-            print(f"{TAG} XGO init failed: {e}", flush=True)
-            self._dog = None
+    # ================================================================ Slots
 
-    def _do_turn(self, direction: int):
-        """direction: +1=右转, -1=左转。在后台线程执行。"""
-        if self._dog is None or self._dog_busy:
-            return
-        self._dog_busy = True
-
-        def _turn():
-            try:
-                speed = TURN_SPEED * direction
-                self._dog.turn(speed)
-                time.sleep(TURN_DURATION)
-                self._dog.turn(0)
-            except Exception as e:
-                print(f"{TAG} turn error: {e}", flush=True)
-            finally:
-                self._dog_busy = False
-
-        threading.Thread(target=_turn, daemon=True).start()
-
-    # ================================================================ Mic
-    def _mic_loop(self):
-        """录音线程：持续读取立体声音频，计算左右声道能量。"""
-        import pyaudio
-        pa = None
-        stream = None
-        try:
-            pa = pyaudio.PyAudio()
-            stream = pa.open(
-                format=pyaudio.paInt16,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK,
-            )
-            print(f"{TAG} mic stream opened (rate={RATE}, ch={CHANNELS})", flush=True)
-
-            _debug_frame = 0
-            while self._running:
-                _debug_frame += 1
-                try:
-                    data = stream.read(CHUNK, exception_on_overflow=False)
-                except Exception:
-                    continue
-
-                # 解析立体声 interleaved: [L0, R0, L1, R1, ...]
-                samples = np.frombuffer(data, dtype=np.int16)
-                left = samples[0::2]   # 偶数下标 = 左声道
-                right = samples[1::2]  # 奇数下标 = 右声道
-
-                # 提取人声
-                voice_l = _voice_extract(left, RATE)
-                voice_r = _voice_extract(right, RATE)
-                left_db = _rms_db(voice_l)
-                right_db = _rms_db(voice_r)
-
-                # 互相关方向
-                xdir = 0
-                if left_db > -60 or right_db > -60:
-                    xdir = int((left_db - right_db) / max(abs(left_db - right_db), 0.1))
-                    if abs(left_db - right_db) < 2.0:
-                        xdir = 0
-
-                self.energy_updated.emit(left_db, right_db, xdir)
-                if _debug_frame % 10 == 0:
-                    raw_l = _rms_db(left); raw_r = _rms_db(right)
-                    diff = left_db - right_db
-                    print(f"{TAG} #{_debug_frame} raw L{raw_l:.0f} R{raw_r:.0f} | voice L{left_db:.0f} R{right_db:.0f} diff={diff:+.1f}", flush=True)
-
-        except Exception as e:
-            print(f"{TAG} mic error: {e}", flush=True)
-        finally:
-            if stream:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception:
-                    pass
-            if pa:
-                pa.terminate()
-            print(f"{TAG} mic thread exit", flush=True)
-
-    # ================================================================ Energy
-    def _on_energy(self, left_db: float, right_db: float, xdir: int):
-        """自适应基线：安静时缓慢追踪环境偏置，说话时冻结基线对比。"""
+    def _on_audio_frame(self, left_db: float, right_db: float, _dir_int: int, diff: float):
+        """接收音频引擎的每一帧处理结果（在 GUI 线程执行）。"""
         self._left_db = left_db
         self._right_db = right_db
-        diff = left_db - right_db
+        self._diff = diff
 
-        # 初始化
-        if not hasattr(self, '_baseline'):
-            self._baseline = diff
-            self._baseline_frames = 0
+        direction, _ = self._estimator.update(left_db, right_db)
+        self._direction = direction
 
-        self._baseline_frames += 1
+        # 自动追踪
+        if self._auto_track and direction != Direction.NONE:
+            self._robot.turn(direction)
 
-        # 判断是否在说话：voice 能量高于 -30dB 认为有人声
-        speaking = max(left_db, right_db) > -30
+        # 更新状态栏
+        self._update_status()
 
-        if not speaking:
-            # 安静环境：缓慢更新基线（EWMA, alpha=0.02）
-            self._baseline = 0.02 * diff + 0.98 * self._baseline
-        # 说话时 baseline 冻结
-
-        corrected = diff - self._baseline
-        thresh = self._threshold
-
-        if corrected > thresh:
-            self._direction = "← 左"
-        elif corrected < -thresh:
-            self._direction = "→ 右"
+    def _update_status(self) -> None:
+        track = "AUTO" if self._auto_track else "MANUAL"
+        sens = self._sensitivity.label
+        if self._direction == Direction.LEFT:
+            arrow = "←"
+        elif self._direction == Direction.RIGHT:
+            arrow = "→"
         else:
-            self._direction = ""
-
-        if self._auto_track and not self._dog_busy:
-            if corrected > thresh:
-                self._do_turn(-1)
-            elif corrected < -thresh:
-                self._do_turn(1)
-
-        sens_name = SENSITIVITY_PRESETS[self._sensitivity_idx][0]
-        track_str = "🟢 自动" if self._auto_track else "⚪ 手动"
-        spk = "🎙" if speaking else "-"
-        self._status.setText(
-            f"{track_str} | 灵敏度:{sens_name} | {spk} diff{diff:+.1f} base{self._baseline:+.1f} corr{corrected:+.1f}"
+            arrow = "–"
+        self._status_label.setText(
+            f"{track} | 灵敏度:{sens} | {arrow} | diff={self._diff:+.1f}dB"
         )
-        if self._baseline_frames % 20 == 0:
-            spk_label = "SPEAKING" if speaking else "silence"
-            print(f"{TAG} GUI dir=\"{self._direction}\" {spk_label} diff{diff:+.1f} base{self._baseline:+.1f} corr{corrected:+.1f} thresh{thresh:.1f}", flush=True)
+
     # ================================================================ Paint
+
     def paintEvent(self, ev):
         super().paintEvent(ev)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         w, h = self.width(), self.height()
+        if w < 10 or h < 10:
+            painter.end()
+            return
 
-        # ---- 绘制区域 ----
-        bar_area_top = 38
-        bar_area_bottom = h - 42
-        bar_area_height = bar_area_bottom - bar_area_top
-        bar_width = 50
-        gap = 50  # 左右柱之间间距
-        center_x = w // 2
+        # ---- 布局计算 ----
+        top_margin = 38
+        bottom_margin = 42
+        bar_area_top = top_margin
+        bar_area_bottom = h - bottom_margin
+        bar_area_h = bar_area_bottom - bar_area_top
+        bar_w = 50
+        gap = 50
+        cx = w // 2
+        left_x = cx - gap // 2 - bar_w
+        right_x = cx + gap // 2
 
-        left_x = center_x - gap // 2 - bar_width
-        right_x = center_x + gap // 2
+        # dB → 像素
+        def db_to_px(db_val: float) -> int:
+            clamped = max(DB_FLOOR, min(DB_CEIL, db_val))
+            ratio = (clamped - DB_FLOOR) / (DB_CEIL - DB_FLOOR)
+            return max(0, int(ratio * (bar_area_h - 10)))
 
-        # dB 范围映射到像素高度 (-60dB ~ 0dB)
-        db_min, db_max = -60.0, 0.0
+        left_h = db_to_px(self._left_db)
+        right_h = db_to_px(self._right_db)
 
-        def db_to_height(db_val):
-            clamped = max(db_min, min(db_max, db_val))
-            ratio = (clamped - db_min) / (db_max - db_min)
-            return int(ratio * (bar_area_height - 10))
-
-        left_h = db_to_height(self._left_db)
-        right_h = db_to_height(self._right_db)
-
-        # ---- 绘制背景框 ----
-        frame_color = QColor(180, 190, 210, 80)
+        # ---- 背景框 ----
         painter.setPen(QPen(QColor(140, 150, 170, 120), 1))
-        painter.setBrush(QBrush(frame_color))
-        painter.drawRoundedRect(left_x - 4, bar_area_top, bar_width + 8, bar_area_height, 6, 6)
-        painter.drawRoundedRect(right_x - 4, bar_area_top, bar_width + 8, bar_area_height, 6, 6)
+        painter.setBrush(QBrush(QColor(180, 190, 210, 80)))
+        for bx in (left_x, right_x):
+            painter.drawRoundedRect(bx - 4, bar_area_top, bar_w + 8, bar_area_h, 6, 6)
 
-        # ---- 绘制能量柱：高的亮橙色，低的灰蓝色 ----
-        left_wins = self._left_db > self._right_db + 0.5
-        right_wins = self._right_db > self._left_db + 0.5
+        # ---- 能量柱 ----
+        left_hot = self._left_db > self._right_db + 0.5
+        right_hot = self._right_db > self._left_db + 0.5
 
-        if left_h > 0:
-            grad_l = QLinearGradient(left_x, bar_area_bottom - left_h, left_x, bar_area_bottom)
-            if left_wins:
-                grad_l.setColorAt(0, QColor(255, 160, 40))   # 亮橙
-                grad_l.setColorAt(1, QColor(230, 100, 20))   # 深橙
+        for bx, bh, is_hot in (
+            (left_x, left_h, left_hot),
+            (right_x, right_h, right_hot),
+        ):
+            if bh <= 0:
+                continue
+            grad = QLinearGradient(bx, bar_area_bottom - bh, bx, bar_area_bottom)
+            if is_hot:
+                grad.setColorAt(0.0, QColor(255, 160, 40))
+                grad.setColorAt(1.0, QColor(230, 100, 20))
             else:
-                grad_l.setColorAt(0, QColor(140, 160, 190))  # 灰蓝
-                grad_l.setColorAt(1, QColor(110, 130, 160))  # 深灰蓝
+                grad.setColorAt(0.0, QColor(140, 160, 190))
+                grad.setColorAt(1.0, QColor(110, 130, 160))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(grad_l))
-            painter.drawRoundedRect(
-                left_x, bar_area_bottom - left_h,
-                bar_width, left_h, 4, 4
-            )
-
-        if right_h > 0:
-            grad_r = QLinearGradient(right_x, bar_area_bottom - right_h, right_x, bar_area_bottom)
-            if right_wins:
-                grad_r.setColorAt(0, QColor(255, 160, 40))   # 亮橙
-                grad_r.setColorAt(1, QColor(230, 100, 20))   # 深橙
-            else:
-                grad_r.setColorAt(0, QColor(140, 160, 190))  # 灰蓝
-                grad_r.setColorAt(1, QColor(110, 130, 160))  # 深灰蓝
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(grad_r))
-            painter.drawRoundedRect(
-                right_x, bar_area_bottom - right_h,
-                bar_width, right_h, 4, 4
-            )
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(bx, bar_area_bottom - bh, bar_w, bh, 4, 4)
 
         # ---- 标签 ----
-        painter.setPen(QColor(26, 43, 94))
-        font = QFont("sans-serif", 10, QFont.Weight.Bold)
-        painter.setFont(font)
-        painter.drawText(left_x, bar_area_bottom + 15, bar_width, 16,
+        painter.setPen(QColor(*hex_to_rgb(Color.text_primary)))
+        font_label = QFont("sans-serif", 10, QFont.Weight.Bold)
+        painter.setFont(font_label)
+        painter.drawText(left_x, bar_area_bottom + 14, bar_w, 18,
                          Qt.AlignmentFlag.AlignCenter, "L 左")
-        painter.drawText(right_x, bar_area_bottom + 15, bar_width, 16,
+        painter.drawText(right_x, bar_area_bottom + 14, bar_w, 18,
                          Qt.AlignmentFlag.AlignCenter, "R 右")
 
         # ---- dB 数值 ----
         font_small = QFont("sans-serif", 9)
         painter.setFont(font_small)
         painter.setPen(QColor(80, 90, 120))
-        painter.drawText(left_x, bar_area_top - 16, bar_width, 14,
-                         Qt.AlignmentFlag.AlignCenter, f"{self._left_db:.1f}dB")
-        painter.drawText(right_x, bar_area_top - 16, bar_width, 14,
-                         Qt.AlignmentFlag.AlignCenter, f"{self._right_db:.1f}dB")
+        painter.drawText(left_x, bar_area_top - 16, bar_w, 14,
+                         Qt.AlignmentFlag.AlignCenter, f"{self._left_db:.1f} dB")
+        painter.drawText(right_x, bar_area_top - 16, bar_w, 14,
+                         Qt.AlignmentFlag.AlignCenter, f"{self._right_db:.1f} dB")
 
         # ---- 方向指示 ----
         font_dir = QFont("sans-serif", 14, QFont.Weight.Bold)
         painter.setFont(font_dir)
-
-        if "左" in self._direction:
+        if self._direction == Direction.LEFT:
             painter.setPen(QColor(230, 110, 20))
-        elif "右" in self._direction:
+            arrow_text = "← 左"
+        elif self._direction == Direction.RIGHT:
             painter.setPen(QColor(230, 110, 20))
+            arrow_text = "→ 右"
         else:
             painter.setPen(QColor(150, 150, 150))
+            arrow_text = "···"
+        dir_y = bar_area_top + bar_area_h // 2 - 10
+        painter.drawText(cx - 25, dir_y, 50, 24,
+                         Qt.AlignmentFlag.AlignCenter, arrow_text)
 
-        dir_y = bar_area_top + bar_area_height // 2 - 10
-        painter.drawText(center_x - 25, dir_y, 50, 24,
-                         Qt.AlignmentFlag.AlignCenter, self._direction if self._direction else "...")
-
-        # ---- 刻度线 ----
+        # ---- 刻度 ----
         painter.setPen(QPen(QColor(160, 170, 190, 100), 1))
         font_tick = QFont("sans-serif", 7)
         painter.setFont(font_tick)
-        for db in [-50, -40, -30, -20, -10, 0]:
-            y = bar_area_bottom - db_to_height(db)
-            painter.drawLine(left_x - 4, y, left_x - 1, y)
-            painter.drawLine(right_x + bar_width + 1, y, right_x + bar_width + 4, y)
+        for db in (-50, -40, -30, -20, -10, 0):
+            y = bar_area_bottom - db_to_px(db)
+            painter.drawLine(left_x - 5, y, left_x - 1, y)
+            painter.drawLine(right_x + bar_w + 1, y, right_x + bar_w + 5, y)
 
         painter.end()
 
-    # ================================================================ Keys FIFO
-    def _setup_keys_fifo(self):
+    # ================================================================ FIFO
+
+    def _setup_fifo(self) -> None:
         try:
             self._keys_fd = os.open(KEYS_FIFO, os.O_RDONLY | os.O_NONBLOCK)
             self._keys_notifier = QSocketNotifier(
-                self._keys_fd, QSocketNotifier.Type.Read, self
+                self._keys_fd, QSocketNotifier.Type.Read, self,
             )
-            self._keys_notifier.activated.connect(self._on_key_fifo)
-            print(f"{TAG} Keys FIFO opened", flush=True)
-        except Exception as e:
-            print(f"{TAG} Keys FIFO error: {e}", flush=True)
+            self._keys_notifier.activated.connect(self._on_fifo_data)
+            log.info("FIFO opened")
+        except Exception:
+            log.exception("FIFO open failed")
             self._keys_fd = -1
 
-    def _on_key_fifo(self, *args):  # pip/apt PySide6 compatible
+    def _on_fifo_data(self, *args) -> None:
         try:
             data = os.read(self._keys_fd, 32)
-            if data:
-                for line in data.decode().strip().split("\n"):
-                    if line.strip():
-                        qt_key = int(line.strip())
-                        ev = QKeyEvent(
-                            QKeyEvent.Type.KeyPress,
-                            qt_key,
-                            Qt.KeyboardModifier.NoModifier,
-                        )
-                        QApplication.postEvent(self, ev)
-        except Exception as e:
-            print(f"{TAG} key fifo read error: {e}", flush=True)
+            if not data:
+                return
+            for line in data.decode(errors="replace").strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                qt_key = int(line)
+                QApplication.postEvent(
+                    self,
+                    QKeyEvent(
+                        QKeyEvent.Type.KeyPress,
+                        qt_key,
+                        Qt.KeyboardModifier.NoModifier,
+                    ),
+                )
+        except Exception:
+            pass
 
-    # ================================================================ Key events
+    # ================================================================ Keys
+
     def keyPressEvent(self, ev: QKeyEvent):
         key = ev.key()
 
-        if key == Qt.Key.Key_Back:  # C → 退出
-            print(f"{TAG} KEY_BACK → exit", flush=True)
+        if key == Qt.Key.Key_Back:          # C → 退出
+            log.info("KEY_BACK → exit")
             self.close()
 
-        elif key == Qt.Key.Key_Left:  # A → 自动追踪开关
+        elif key == Qt.Key.Key_Left:         # A → 自动追踪
             self._auto_track = not self._auto_track
-            state = "ON" if self._auto_track else "OFF"
-            print(f"{TAG} auto-track {state}", flush=True)
+            log.info("auto-track = %s", self._auto_track)
 
-        elif key == Qt.Key.Key_Right:  # B → 灵敏度切换
-            self._sensitivity_idx = (self._sensitivity_idx + 1) % len(SENSITIVITY_PRESETS)
-            name, thr = SENSITIVITY_PRESETS[self._sensitivity_idx]
-            self._threshold = thr
-            print(f"{TAG} sensitivity → {name} ({thr}dB)", flush=True)
+        elif key == Qt.Key.Key_Right:        # B → 灵敏度
+            self._sensitivity = self._sensitivity.next()
+            self._estimator.threshold = self._sensitivity.threshold_db
+            log.info("sensitivity → %s (%.1f dB)",
+                     self._sensitivity.label, self._sensitivity.threshold_db)
 
         elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):  # D → 手动转身
-            if self._direction and "左" in self._direction:
-                print(f"{TAG} manual turn LEFT", flush=True)
-                self._do_turn(-1)
-            elif self._direction and "右" in self._direction:
-                print(f"{TAG} manual turn RIGHT", flush=True)
-                self._do_turn(1)
-            else:
-                print(f"{TAG} manual turn: no clear direction", flush=True)
+            self._robot.turn(self._direction)
 
     # ================================================================ Layout
+
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         w, h = self.width(), self.height()
-        self._status.setGeometry(10, h - 40, w - 20, 16)
+        self._status_label.setGeometry(10, h - 40, w - 20, 18)
 
     # ================================================================ Cleanup
+
     def closeEvent(self, ev):
-        print(f"{TAG} closing...", flush=True)
-        self._running = False
+        log.info("shutting down...")
         self._paint_timer.stop()
         self._exit_timer.stop()
+        self._audio.stop()
+
         if hasattr(self, "_keys_fd") and self._keys_fd >= 0:
             try:
                 os.close(self._keys_fd)
             except Exception:
                 pass
-        if self._dog:
-            try:
-                self._dog.turn(0)
-            except Exception:
-                pass
-        super().closeEvent(ev)
 
+        self._robot.stop()
+        super().closeEvent(ev)
+        log.info("closed")
+
+
+# ============================================================================
+# 入口
+# ============================================================================
 
 def main():
+    # 使用 udev 软链接 /dev/fb-spi，避免 fb 编号漂移
+    # （见 HARDWARE_PLAN.md 改造 1）
+    if "QT_QPA_PLATFORM" not in os.environ:
+        fb_path = "/dev/fb-spi"
+        if os.path.exists(fb_path):
+            os.environ["QT_QPA_PLATFORM"] = f"linuxfb:fb={fb_path}"
+        else:
+            os.environ["QT_QPA_PLATFORM"] = "linuxfb"
+
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
     app = QApplication(sys.argv)
