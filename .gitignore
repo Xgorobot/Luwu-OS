@@ -17,3 +17,6 @@ __pycache__/
 CMakeUserPresets.json
 .state
 .idea
+.qoder
+.venv
+.xgo-blockly

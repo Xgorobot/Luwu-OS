@@ -19,6 +19,12 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/xgolib/"><img src="https://img.shields.io/pypi/v/xgolib.svg?label=xgolib" alt="xgolib" /></a>
+  <a href="https://pypi.org/project/xgoedu-luwuos/"><img src="https://img.shields.io/pypi/v/xgoedu-luwuos.svg?label=xgoedu-luwuos" alt="xgoedu-luwuos" /></a>
+  <a href="https://pypi.org/project/xgo-blockly-luwuos/"><img src="https://img.shields.io/pypi/v/xgo-blockly-luwuos.svg?label=xgo-blockly-luwuos" alt="xgo-blockly-luwuos" /></a>
+</p>
+
+<p align="center">
   <a href="README.md">📖 English</a>
 </p>
 
@@ -202,6 +208,11 @@ sudo bash configs/install.sh
 - ALSA 多应用音频共享（`dmix` + `dsnoop`）
 - systemd 服务（启动器、欠压监控、硬件自动识别）
 - Python 依赖安装（`pip`）
+
+核心 Python 包：
+- [`xgolib`](https://pypi.org/project/xgolib/) — 机器狗运动库
+- [`xgoedu-luwuos`](https://pypi.org/project/xgoedu-luwuos/) — 教育库（PySide6 QPainter）
+- [`xgo-blockly-luwuos`](https://pypi.org/project/xgo-blockly-luwuos/) — Blockly 图形化编程
 
 ### 启动
 

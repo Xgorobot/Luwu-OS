@@ -19,6 +19,12 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/xgolib/"><img src="https://img.shields.io/pypi/v/xgolib.svg?label=xgolib" alt="xgolib" /></a>
+  <a href="https://pypi.org/project/xgoedu-luwuos/"><img src="https://img.shields.io/pypi/v/xgoedu-luwuos.svg?label=xgoedu-luwuos" alt="xgoedu-luwuos" /></a>
+  <a href="https://pypi.org/project/xgo-blockly-luwuos/"><img src="https://img.shields.io/pypi/v/xgo-blockly-luwuos.svg?label=xgo-blockly-luwuos" alt="xgo-blockly-luwuos" /></a>
+</p>
+
+<p align="center">
   <a href="README_CN.md">📖 中文文档</a>
 </p>
 
@@ -207,6 +213,11 @@ This single script handles everything:
 - ALSA multi-app audio sharing (`dmix` + `dsnoop`)
 - systemd services (launcher, undervolt monitor, hardware auto-detect)
 - Python dependencies via `pip`
+
+Key Python packages installed:
+- [`xgolib`](https://pypi.org/project/xgolib/) — Robot dog motion library
+- [`xgoedu-luwuos`](https://pypi.org/project/xgoedu-luwuos/) — Educational library (PySide6 QPainter)
+- [`xgo-blockly-luwuos`](https://pypi.org/project/xgo-blockly-luwuos/) — Blockly visual programming
 
 ### Launch
 
